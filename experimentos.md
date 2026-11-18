@@ -6,6 +6,7 @@ Uma linha por ideia aplicada na tabela, e os detalhes de cada uma na seção log
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | 01 | Índice em `itens_pedido(pedido_id)` | [PostgreSQL 16, 11.1](https://www.postgresql.org/docs/16/indexes-intro.html) | Aplicada e medida | 4,21 req/s, p95 14.698,7 ms | 7,59 req/s, p95 7.672,0 ms | antes: `resultados/20261114-*-00-linha-de-base` (3). Depois: `resultados/20261118-*-01-indice-itens-pedido` (3) | Cada consulta de itens ficou barata, mas o N+1 continua |
 | 02 | Pool de conexões (`pg.Pool`, `max` 10) | [node-postgres, Pooling](https://node-postgres.com/features/pooling) | Aplicada e medida | 7,59 req/s, p95 7.672,0 ms | 9,12 req/s, p95 6.918,9 ms | antes: `resultados/20261118-17*-01-indice-itens-pedido` (3). Depois: `resultados/20261118-18*-02-pool-de-conexoes` (3) | Melhorou o geral, mas as rotas leves ficaram mais lentas |
+| 03 | Consulta única com `LEFT JOIN` em `/clientes/:id/pedidos` | [Rails Guides, N+1](https://guides.rubyonrails.org/active_record_querying.html) e [PostgreSQL 16, 7.2](https://www.postgresql.org/docs/16/queries-table-expressions.html) | Aplicada e medida | 9,12 req/s, p95 6.918,9 ms | 9,75 req/s, p95 5.123,3 ms | antes: `resultados/20261118-18*-02-pool-de-conexoes` (3). Depois: `resultados/20261118-20*-03-join-pedidos-do-cliente` (3) | `pedidos-do-cliente` caiu de 8.513,6 para 2.773,3 ms, e as rotas leves pioraram |
 
 ## 01 Índice em `itens_pedido(pedido_id)`
 
@@ -77,3 +78,40 @@ Uma linha por ideia aplicada na tabela, e os detalhes de cada uma na seção log
 **Conclusão:** o pool tirou o custo de abrir uma conexão a cada consulta (rede, CPU e processo novo no banco), e o geral melhorou. A hipótese acertou que o custo estava antes da consulta, mas errou onde o ganho aparece: as rotas pesadas de uma consulta melhoraram e as rotas leves e as de várias consultas pioraram. A explicação provável, ainda sem prova, é que com `max` 10 e 20 usuários as consultas esperam numa fila por uma conexão, e as leves ficam presas atrás das pesadas. Sem pool, cada consulta tinha o seu processo no banco e o sistema repartia a CPU entre todos. A CPU limita igualmente nos dois casos, mas o pool muda quem espera e onde. Uma conexão destruída a cada erro (`release(true)`) custa uma reconexão, mas só no caminho de erro.
 
 **O que refutaria:** com `max` igual ao número de usuários (20), as rotas leves não voltarem ao nível anterior ao pool.
+
+## 03 Consulta única com `LEFT JOIN` em `/clientes/:id/pedidos`
+
+**Rótulo:** `03-join-pedidos-do-cliente`
+
+**Ideia e fonte:** trocar as 1 + 1 + P + I consultas da rota (cliente, pedidos, itens de cada pedido e produto de cada item) por uma consulta só, com `LEFT JOIN` a partir de `clientes`. Fontes: [Rails Guides, 16.1 N + 1 Queries Problem](https://guides.rubyonrails.org/active_record_querying.html), que define o problema com o exemplo de "11 queries in total" trocadas por 2, e [PostgreSQL 16, 7.2 Table Expressions](https://www.postgresql.org/docs/16/queries-table-expressions.html), que diz que no `LEFT OUTER JOIN` "a joined row is added with null values in columns of T2", por isso o pedido sem itens continua na resposta. Acesso em 2026-11-18. Nenhuma das duas mede latência.
+
+**Status:** Aplicada e medida.
+
+**Hipótese** (commit `1ae7302`): trocar as consultas por uma única, com `LEFT JOIN` a partir de `clientes`, deve reduzir o p95 de `/clientes/:id/pedidos`, porque elimina as idas ao banco e as esperas por uma conexão do pool a cada pedido e a cada item. As outras rotas só devem mudar por efeito indireto, com menos disputa pelo pool e pelo banco.
+
+**Antes usado:** mudança 02.
+- `resultados/20261118-181942-02-pool-de-conexoes`
+- `resultados/20261118-182111-02-pool-de-conexoes`
+- `resultados/20261118-182243-02-pool-de-conexoes`
+
+**Depois:**
+- `resultados/20261118-202034-03-join-pedidos-do-cliente`
+- `resultados/20261118-202203-03-join-pedidos-do-cliente`
+- `resultados/20261118-202333-03-join-pedidos-do-cliente`
+
+**Resultado** (medianas das três execuções, antes → depois):
+- Requisições por segundo: 9,12 → 9,75
+- p95 geral: 6.918,9 → 5.123,3 ms
+- p95 de `pedidos-do-cliente`: 8.513,6 → 2.773,3 ms
+- p95 de `cliente`: 610,5 → 1.542,2 ms
+- p95 de `cliente-por-email`: 1.220,5 → 2.152,4 ms
+- p95 de `busca-produtos`: 830,9 → 1.754,0 ms
+- p95 de `pedidos-por-status`: 5.685,2 → 6.725,9 ms
+- p95 de `vendas-por-dia`: 4.511,2 → 5.711,5 ms
+- p95 de `top-produtos`: 16.655,4 → 17.205,4 ms
+- Memória média do banco: 274,7 → 272,3 MiB. Da API: 36,7 → 34,5 MiB
+- CPU: o CPU do `podman stats` não é confiável neste ambiente, então não é citado
+
+**Conclusão:** a consulta única tirou as idas ao banco por pedido e por item e a espera por uma conexão a cada uma, e o p95 de `pedidos-do-cliente` caiu de 8.513,6 para 2.773,3 ms, puxando o geral para 5.123,3 ms. As rotas leves pioraram de novo (`cliente` foi de 610,5 para 1.542,2 ms). A explicação provável, ainda sem prova, é a mesma fila do pool: passa mais requisição por segundo e as consultas rápidas esperam atrás das pesadas. A resposta da rota ficou idêntica à anterior, e o contrato mantido não cobre cliente sem pedidos nem pedido sem itens porque os dados não têm esses casos. Esses dois casos foram provados em bancos descartáveis, com os dados escritos à mão, comparando a rota antiga e a nova.
+
+**O que refutaria:** o p95 de `pedidos-do-cliente` não cair.
