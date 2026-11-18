@@ -1,4 +1,4 @@
-const { Client } = require('pg');
+const { Pool } = require('pg');
 
 const config = {
   host: process.env.DB_HOST || 'localhost',
@@ -7,14 +7,31 @@ const config = {
   database: process.env.DB_NAME || 'loja',
 };
 
+const pgPool = new Pool(config);
+
 async function consultar(sql, parametros = []) {
-  const cliente = new Client(config);
-  await cliente.connect();
+  const cliente = await pgPool.connect();
+
+  let released = false;
+
   try {
     const resultado = await cliente.query(sql, parametros);
+
     return resultado.rows;
+  } catch (error) {
+    if (!released) {
+      cliente.release(true);
+
+      released = true;
+    }
+
+    throw error;
   } finally {
-    await cliente.end();
+    if (!released) {
+      cliente.release();
+
+      released = true;
+    }
   }
 }
 
