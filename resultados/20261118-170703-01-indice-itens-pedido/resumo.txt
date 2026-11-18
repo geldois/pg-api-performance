@@ -1,0 +1,17 @@
+Medição: 01-indice-itens-pedido
+Carga: 20 usuários virtuais por 60s
+
+Requisições:        483
+Requisições/s:      7.59
+Tempo de resposta:  mediana 822.2 ms | p95 7402.2 ms | p99 13586.4 ms
+Erros:              0.00%
+
+Por rota:
+rota                  req       mediana       p95           p99           erros   
+cliente               132       102.4 ms      198.9 ms      252.7 ms      0.0%    
+cliente-por-email     72        837.5 ms      1475.6 ms     1522.8 ms     0.0%    
+pedidos-do-cliente    99        4099.4 ms     6494.0 ms     6817.5 ms     0.0%    
+pedidos-por-status    64        5694.0 ms     8521.5 ms     10755.2 ms    0.0%    
+busca-produtos        76        395.5 ms      640.2 ms      794.4 ms      0.0%    
+vendas-por-dia        34        5716.8 ms     9777.6 ms     10411.4 ms    0.0%    
+top-produtos          6         24204.1 ms    29205.5 ms    29502.4 ms    0.0%    
