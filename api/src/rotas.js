@@ -63,38 +63,39 @@ rotas.get('/clientes/:id/pedidos', assincrono(async (req, res) => {
   const id = inteiroPositivo(req.params.id);
   if (id === null) return res.status(400).json({ erro: 'id invalido' });
 
-  const clientes = await consultar('SELECT * FROM clientes WHERE id = $1', [id]);
-  if (clientes.length === 0) return res.status(404).json({ erro: 'cliente nao encontrado' });
+  // LEFT JOIN a partir de clientes: cliente sem pedidos e pedido sem itens continuam na resposta, e zero linhas significa cliente inexistente
+  const linhas = await consultar(`SELECT ped.id AS pedido_id, ped.status, ped.criado_em, ite.id AS item_id, ite.produto_id, pro.nome AS produto_nome, ite.quantidade, ite.preco_unitario_centavos
+    FROM clientes AS cli LEFT JOIN pedidos AS ped ON cli.id = ped.cliente_id LEFT JOIN itens_pedido AS ite ON ped.id = ite.pedido_id LEFT JOIN produtos AS pro
+    ON pro.id = ite.produto_id WHERE cli.id = $1 ORDER BY ped.criado_em DESC, ped.id DESC, ite.id ASC
+    `, [id]);
 
-  const pedidos = await consultar(
-    'SELECT * FROM pedidos WHERE cliente_id = $1 ORDER BY criado_em DESC, id DESC',
-    [id],
-  );
+  if (linhas.length === 0) return res.status(404).json({ erro: 'cliente nao encontrado' });
 
   const resposta = [];
-  for (const pedido of pedidos) {
-    const itens = await consultar('SELECT * FROM itens_pedido WHERE pedido_id = $1 ORDER BY id', [pedido.id]);
+  for (const linha of linhas) {
+    if (linha.pedido_id === null) continue;
 
-    const itensFormatados = [];
-    let total = 0;
-    for (const item of itens) {
-      const [produto] = await consultar('SELECT * FROM produtos WHERE id = $1', [item.produto_id]);
-      itensFormatados.push({
-        produto_id: item.produto_id,
-        produto_nome: produto.nome,
-        quantidade: item.quantidade,
-        preco_unitario_centavos: item.preco_unitario_centavos,
-      });
-      total += item.quantidade * item.preco_unitario_centavos;
+    let pedido = resposta[resposta.length - 1];
+    if (!pedido || pedido.id !== linha.pedido_id) {
+      pedido = {
+        id: linha.pedido_id,
+        status: linha.status,
+        criado_em: linha.criado_em,
+        total_centavos: 0,
+        itens: [],
+      };
+      resposta.push(pedido);
     }
 
-    resposta.push({
-      id: pedido.id,
-      status: pedido.status,
-      criado_em: pedido.criado_em,
-      total_centavos: total,
-      itens: itensFormatados,
+    if (linha.item_id === null) continue;
+
+    pedido.itens.push({
+      produto_id: linha.produto_id,
+      produto_nome: linha.produto_nome,
+      quantidade: linha.quantidade,
+      preco_unitario_centavos: linha.preco_unitario_centavos,
     });
+    pedido.total_centavos += linha.quantidade * linha.preco_unitario_centavos;
   }
 
   res.json(resposta);
