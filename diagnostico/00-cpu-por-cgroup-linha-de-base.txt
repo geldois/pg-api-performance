@@ -1,0 +1,15 @@
+# Comando: leitura de nr_periods e nr_throttled de cpu.stat do cgroup de cada container antes e depois de cada execução de scripts/medir.sh 00-linha-de-base (linhas copiadas da saída); data 2026-11-14
+Execução 1 (resultados/20261114-221918-00-linha-de-base)
+estrangulamento (antes -> depois)
+  api  : nr_periods 806 nr_throttled 35  -> nr_periods 1676 nr_throttled 41
+  banco: nr_periods 4166 nr_throttled 1063  -> nr_periods 5116 nr_throttled 1991
+
+Execução 2 (resultados/20261114-222114-00-linha-de-base)
+estrangulamento (antes -> depois)
+  api  : nr_periods 1676 nr_throttled 41  -> nr_periods 2584 nr_throttled 46
+  banco: nr_periods 5124 nr_throttled 1991  -> nr_periods 6130 nr_throttled 2975
+
+Execução 3 (resultados/20261114-222316-00-linha-de-base)
+estrangulamento (antes -> depois)
+  api  : nr_periods 2584 nr_throttled 46  -> nr_periods 3439 nr_throttled 53
+  banco: nr_periods 6146 nr_throttled 2975  -> nr_periods 7092 nr_throttled 3908

@@ -1,0 +1,35 @@
+# Comando: EXPLAIN (ANALYZE, BUFFERS) da consulta de GET /clientes?email=cliente4242@exemplo.com, via docker compose exec banco psql; data 2026-11-15
+--- execução 1 ---
+                                                  QUERY PLAN                                                   
+---------------------------------------------------------------------------------------------------------------
+ Sort  (cost=2678.41..2679.66 rows=500 width=60) (actual time=70.812..70.819 rows=1 loops=1)
+   Sort Key: id
+   Sort Method: quicksort  Memory: 25kB
+   Buffers: shared hit=3 read=1156
+   ->  Seq Scan on clientes  (cost=0.00..2656.00 rows=500 width=60) (actual time=4.932..70.759 rows=1 loops=1)
+         Filter: (lower(email) = 'cliente4242@exemplo.com'::text)
+         Rows Removed by Filter: 99999
+         Buffers: shared read=1156
+ Planning:
+   Buffers: shared hit=80 read=1
+ Planning Time: 2.949 ms
+ Execution Time: 70.858 ms
+(12 rows)
+
+--- execução 2 ---
+                                                  QUERY PLAN                                                   
+---------------------------------------------------------------------------------------------------------------
+ Sort  (cost=2678.41..2679.66 rows=500 width=60) (actual time=41.938..41.944 rows=1 loops=1)
+   Sort Key: id
+   Sort Method: quicksort  Memory: 25kB
+   Buffers: shared hit=1159
+   ->  Seq Scan on clientes  (cost=0.00..2656.00 rows=500 width=60) (actual time=1.775..41.903 rows=1 loops=1)
+         Filter: (lower(email) = 'cliente4242@exemplo.com'::text)
+         Rows Removed by Filter: 99999
+         Buffers: shared hit=1156
+ Planning:
+   Buffers: shared hit=81
+ Planning Time: 0.426 ms
+ Execution Time: 41.976 ms
+(12 rows)
+

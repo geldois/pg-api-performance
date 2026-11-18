@@ -1,0 +1,370 @@
+# Comando: EXPLAIN (ANALYZE, BUFFERS) das consultas das 5 rotas de maior fatia de tempo, via docker compose exec banco psql, repetido com a máquina quieta (os planos de 01 a 05 são de 2026-11-15); data 2026-11-18
+## 01 pedidos do cliente 4242
+--- execução 1 ---
+                                                          QUERY PLAN                                                           
+-------------------------------------------------------------------------------------------------------------------------------
+ Gather Merge  (cost=24438.20..24438.67 rows=4 width=300) (actual time=116.846..118.373 rows=5 loops=1)
+   Workers Planned: 2
+   Workers Launched: 2
+   Buffers: shared hit=3966 read=16994
+   ->  Sort  (cost=23438.18..23438.18 rows=2 width=300) (actual time=114.593..114.594 rows=2 loops=3)
+         Sort Key: criado_em DESC, id DESC
+         Sort Method: quicksort  Memory: 25kB
+         Buffers: shared hit=3966 read=16994
+         Worker 0:  Sort Method: quicksort  Memory: 26kB
+         Worker 1:  Sort Method: quicksort  Memory: 25kB
+         ->  Parallel Seq Scan on pedidos  (cost=0.00..23438.17 rows=2 width=300) (actual time=52.452..114.435 rows=2 loops=3)
+               Filter: (cliente_id = 4242)
+               Rows Removed by Filter: 166665
+               Buffers: shared hit=3840 read=16994
+ Planning:
+   Buffers: shared hit=84
+ Planning Time: 0.292 ms
+ Execution Time: 118.427 ms
+(18 rows)
+
+--- execução 2 ---
+                                                          QUERY PLAN                                                          
+------------------------------------------------------------------------------------------------------------------------------
+ Gather Merge  (cost=24438.20..24438.67 rows=4 width=300) (actual time=61.927..63.941 rows=5 loops=1)
+   Workers Planned: 2
+   Workers Launched: 2
+   Buffers: shared hit=4062 read=16898
+   ->  Sort  (cost=23438.18..23438.18 rows=2 width=300) (actual time=59.648..59.648 rows=2 loops=3)
+         Sort Key: criado_em DESC, id DESC
+         Sort Method: quicksort  Memory: 25kB
+         Buffers: shared hit=4062 read=16898
+         Worker 0:  Sort Method: quicksort  Memory: 26kB
+         Worker 1:  Sort Method: quicksort  Memory: 25kB
+         ->  Parallel Seq Scan on pedidos  (cost=0.00..23438.17 rows=2 width=300) (actual time=26.682..59.578 rows=2 loops=3)
+               Filter: (cliente_id = 4242)
+               Rows Removed by Filter: 166665
+               Buffers: shared hit=3936 read=16898
+ Planning:
+   Buffers: shared hit=84
+ Planning Time: 0.273 ms
+ Execution Time: 63.994 ms
+(18 rows)
+
+## 01 itens do pedido 387071
+--- execução 1 ---
+                                                             QUERY PLAN                                                             
+------------------------------------------------------------------------------------------------------------------------------------
+ Sort  (cost=18367.94..18367.95 rows=4 width=20) (actual time=342.524..343.804 rows=2 loops=1)
+   Sort Key: id
+   Sort Method: quicksort  Memory: 25kB
+   Buffers: shared hit=3 read=9555
+   ->  Gather  (cost=1000.00..18367.90 rows=4 width=20) (actual time=342.127..343.473 rows=2 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         Buffers: shared read=9555
+         ->  Parallel Seq Scan on itens_pedido  (cost=0.00..17367.50 rows=2 width=20) (actual time=310.153..339.979 rows=1 loops=3)
+               Filter: (pedido_id = 387071)
+               Rows Removed by Filter: 499999
+               Buffers: shared read=9555
+ Planning:
+   Buffers: shared hit=71 read=2
+ Planning Time: 1.874 ms
+ Execution Time: 343.843 ms
+(16 rows)
+
+--- execução 2 ---
+                                                            QUERY PLAN                                                            
+----------------------------------------------------------------------------------------------------------------------------------
+ Sort  (cost=18367.94..18367.95 rows=4 width=20) (actual time=50.343..51.730 rows=2 loops=1)
+   Sort Key: id
+   Sort Method: quicksort  Memory: 25kB
+   Buffers: shared hit=99 read=9459
+   ->  Gather  (cost=1000.00..18367.90 rows=4 width=20) (actual time=50.285..51.701 rows=2 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         Buffers: shared hit=96 read=9459
+         ->  Parallel Seq Scan on itens_pedido  (cost=0.00..17367.50 rows=2 width=20) (actual time=45.717..48.256 rows=1 loops=3)
+               Filter: (pedido_id = 387071)
+               Rows Removed by Filter: 499999
+               Buffers: shared hit=96 read=9459
+ Planning:
+   Buffers: shared hit=73
+ Planning Time: 0.267 ms
+ Execution Time: 51.765 ms
+(16 rows)
+
+## 02 contagem de pedidos pagos
+--- execução 1 ---
+                                                                 QUERY PLAN                                                                 
+--------------------------------------------------------------------------------------------------------------------------------------------
+ Finalize Aggregate  (cost=24751.68..24751.69 rows=1 width=8) (actual time=140.079..142.007 rows=1 loops=1)
+   Buffers: shared hit=4032 read=16802
+   ->  Gather  (cost=24751.47..24751.68 rows=2 width=8) (actual time=140.004..142.001 rows=3 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         Buffers: shared hit=4032 read=16802
+         ->  Partial Aggregate  (cost=23751.47..23751.48 rows=1 width=8) (actual time=137.789..137.789 rows=1 loops=3)
+               Buffers: shared hit=4032 read=16802
+               ->  Parallel Seq Scan on pedidos  (cost=0.00..23438.17 rows=125320 width=0) (actual time=0.122..129.452 rows=100000 loops=3)
+                     Filter: (status = 'pago'::text)
+                     Rows Removed by Filter: 66667
+                     Buffers: shared hit=4032 read=16802
+ Planning:
+   Buffers: shared hit=66
+ Planning Time: 0.283 ms
+ Execution Time: 142.097 ms
+(16 rows)
+
+--- execução 2 ---
+                                                                QUERY PLAN                                                                 
+-------------------------------------------------------------------------------------------------------------------------------------------
+ Finalize Aggregate  (cost=24751.68..24751.69 rows=1 width=8) (actual time=111.676..111.800 rows=1 loops=1)
+   Buffers: shared hit=4128 read=16706
+   ->  Gather  (cost=24751.47..24751.68 rows=2 width=8) (actual time=57.375..111.792 rows=3 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         Buffers: shared hit=4128 read=16706
+         ->  Partial Aggregate  (cost=23751.47..23751.48 rows=1 width=8) (actual time=55.145..55.146 rows=1 loops=3)
+               Buffers: shared hit=4128 read=16706
+               ->  Parallel Seq Scan on pedidos  (cost=0.00..23438.17 rows=125320 width=0) (actual time=0.083..50.543 rows=100000 loops=3)
+                     Filter: (status = 'pago'::text)
+                     Rows Removed by Filter: 66667
+                     Buffers: shared hit=4128 read=16706
+ Planning:
+   Buffers: shared hit=66
+ Planning Time: 0.334 ms
+ Execution Time: 111.908 ms
+(16 rows)
+
+## 02 página 1000 de pedidos pagos
+--- execução 1 ---
+                                                                 QUERY PLAN                                                                  
+---------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=54943.99..54946.32 rows=20 width=300) (actual time=286.787..291.187 rows=20 loops=1)
+   Buffers: shared hit=4350 read=16610, temp read=1395 written=11508
+   ->  Gather Merge  (cost=52612.82..81856.20 rows=250640 width=300) (actual time=282.246..290.633 rows=20000 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         Buffers: shared hit=4350 read=16610, temp read=1395 written=11508
+         ->  Sort  (cost=51612.80..51926.10 rows=125320 width=300) (actual time=279.512..280.635 rows=6786 loops=3)
+               Sort Key: criado_em DESC, id DESC
+               Sort Method: external merge  Disk: 29224kB
+               Buffers: shared hit=4350 read=16610, temp read=1395 written=11508
+               Worker 0:  Sort Method: external merge  Disk: 29928kB
+               Worker 1:  Sort Method: external merge  Disk: 32648kB
+               ->  Parallel Seq Scan on pedidos  (cost=0.00..23438.17 rows=125320 width=300) (actual time=0.035..86.192 rows=100000 loops=3)
+                     Filter: (status = 'pago'::text)
+                     Rows Removed by Filter: 66667
+                     Buffers: shared hit=4224 read=16610
+ Planning:
+   Buffers: shared hit=92
+ Planning Time: 0.304 ms
+ Execution Time: 293.373 ms
+(20 rows)
+
+--- execução 2 ---
+                                                                 QUERY PLAN                                                                  
+---------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=54943.99..54946.32 rows=20 width=300) (actual time=238.405..301.118 rows=20 loops=1)
+   Buffers: shared hit=4446 read=16514, temp read=1429 written=11506
+   ->  Gather Merge  (cost=52612.82..81856.20 rows=250640 width=300) (actual time=233.671..300.546 rows=20000 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         Buffers: shared hit=4446 read=16514, temp read=1429 written=11506
+         ->  Sort  (cost=51612.80..51926.10 rows=125320 width=300) (actual time=230.539..231.674 rows=6784 loops=3)
+               Sort Key: criado_em DESC, id DESC
+               Sort Method: external merge  Disk: 32504kB
+               Buffers: shared hit=4446 read=16514, temp read=1429 written=11506
+               Worker 0:  Sort Method: external merge  Disk: 29360kB
+               Worker 1:  Sort Method: external merge  Disk: 29928kB
+               ->  Parallel Seq Scan on pedidos  (cost=0.00..23438.17 rows=125320 width=300) (actual time=0.038..41.338 rows=100000 loops=3)
+                     Filter: (status = 'pago'::text)
+                     Rows Removed by Filter: 66667
+                     Buffers: shared hit=4320 read=16514
+ Planning:
+   Buffers: shared hit=92
+ Planning Time: 0.332 ms
+ Execution Time: 303.110 ms
+(20 rows)
+
+## 03 vendas por dia 2024-06-01 a 2024-06-07
+--- execução 1 ---
+                                                                       QUERY PLAN                                                                        
+---------------------------------------------------------------------------------------------------------------------------------------------------------
+ Gather  (cost=26533.22..44654.16 rows=6753 width=298) (actual time=174.555..594.223 rows=12922 loops=1)
+   Workers Planned: 2
+   Workers Launched: 2
+   Buffers: shared hit=4800 read=25781
+   ->  Parallel Hash Join  (cost=25533.22..42978.86 rows=2814 width=298) (actual time=172.099..577.780 rows=4307 loops=3)
+         Hash Cond: (i.pedido_id = p.id)
+         Buffers: shared hit=4800 read=25781
+         ->  Parallel Seq Scan on itens_pedido i  (cost=0.00..15805.00 rows=625000 width=12) (actual time=0.308..315.601 rows=500000 loops=3)
+               Buffers: shared hit=192 read=9363
+         ->  Parallel Hash  (cost=25521.50..25521.50 rows=938 width=290) (actual time=171.080..171.081 rows=1437 loops=3)
+               Buckets: 8192 (originally 4096)  Batches: 1 (originally 1)  Memory Usage: 1536kB
+               Buffers: shared hit=4416 read=16418
+               ->  Parallel Seq Scan on pedidos p  (cost=0.00..25521.50 rows=938 width=290) (actual time=0.850..169.587 rows=1437 loops=3)
+                     Filter: ((status <> 'cancelado'::text) AND ((criado_em)::date >= '2024-06-01'::date) AND ((criado_em)::date <= '2024-06-07'::date))
+                     Rows Removed by Filter: 165230
+                     Buffers: shared hit=4416 read=16418
+ Planning:
+   Buffers: shared hit=211 read=9
+ Planning Time: 5.974 ms
+ Execution Time: 595.028 ms
+(20 rows)
+
+--- execução 2 ---
+                                                                       QUERY PLAN                                                                        
+---------------------------------------------------------------------------------------------------------------------------------------------------------
+ Gather  (cost=26533.22..44654.16 rows=6753 width=298) (actual time=193.768..597.582 rows=12922 loops=1)
+   Workers Planned: 2
+   Workers Launched: 2
+   Buffers: shared hit=4992 read=25589
+   ->  Parallel Hash Join  (cost=25533.22..42978.86 rows=2814 width=298) (actual time=191.858..591.955 rows=4307 loops=3)
+         Hash Cond: (i.pedido_id = p.id)
+         Buffers: shared hit=4992 read=25589
+         ->  Parallel Seq Scan on itens_pedido i  (cost=0.00..15805.00 rows=625000 width=12) (actual time=0.301..296.703 rows=500000 loops=3)
+               Buffers: shared hit=288 read=9267
+         ->  Parallel Hash  (cost=25521.50..25521.50 rows=938 width=290) (actual time=190.743..190.744 rows=1437 loops=3)
+               Buckets: 8192 (originally 4096)  Batches: 1 (originally 1)  Memory Usage: 1536kB
+               Buffers: shared hit=4512 read=16322
+               ->  Parallel Seq Scan on pedidos p  (cost=0.00..25521.50 rows=938 width=290) (actual time=0.186..188.952 rows=1437 loops=3)
+                     Filter: ((status <> 'cancelado'::text) AND ((criado_em)::date >= '2024-06-01'::date) AND ((criado_em)::date <= '2024-06-07'::date))
+                     Rows Removed by Filter: 165230
+                     Buffers: shared hit=4512 read=16322
+ Planning:
+   Buffers: shared hit=220
+ Planning Time: 0.675 ms
+ Execution Time: 598.180 ms
+(20 rows)
+
+## 04 cliente por e-mail
+--- execução 1 ---
+                                                  QUERY PLAN                                                   
+---------------------------------------------------------------------------------------------------------------
+ Sort  (cost=2678.41..2679.66 rows=500 width=60) (actual time=62.243..62.244 rows=1 loops=1)
+   Sort Key: id
+   Sort Method: quicksort  Memory: 25kB
+   Buffers: shared hit=4 read=1155
+   ->  Seq Scan on clientes  (cost=0.00..2656.00 rows=500 width=60) (actual time=3.628..62.204 rows=1 loops=1)
+         Filter: (lower(email) = 'cliente4242@exemplo.com'::text)
+         Rows Removed by Filter: 99999
+         Buffers: shared hit=1 read=1155
+ Planning:
+   Buffers: shared hit=81
+ Planning Time: 2.194 ms
+ Execution Time: 62.271 ms
+(12 rows)
+
+--- execução 2 ---
+                                                  QUERY PLAN                                                   
+---------------------------------------------------------------------------------------------------------------
+ Sort  (cost=2678.41..2679.66 rows=500 width=60) (actual time=41.194..41.195 rows=1 loops=1)
+   Sort Key: id
+   Sort Method: quicksort  Memory: 25kB
+   Buffers: shared hit=1159
+   ->  Seq Scan on clientes  (cost=0.00..2656.00 rows=500 width=60) (actual time=2.569..41.162 rows=1 loops=1)
+         Filter: (lower(email) = 'cliente4242@exemplo.com'::text)
+         Rows Removed by Filter: 99999
+         Buffers: shared hit=1156
+ Planning:
+   Buffers: shared hit=81
+ Planning Time: 0.371 ms
+ Execution Time: 41.222 ms
+(12 rows)
+
+## 05 top 10 produtos
+--- execução 1 ---
+                                                                                 QUERY PLAN                                                                                 
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=57105.13..57105.16 rows=10 width=56) (actual time=1690.856..1693.273 rows=10 loops=1)
+   Buffers: shared hit=5384 read=25587
+   ->  Sort  (cost=57105.13..57155.13 rows=20000 width=56) (actual time=1690.855..1693.271 rows=10 loops=1)
+         Sort Key: (sum((i.quantidade * i.preco_unitario_centavos))) DESC, pr.id
+         Sort Method: top-N heapsort  Memory: 27kB
+         Buffers: shared hit=5384 read=25587
+         ->  Finalize HashAggregate  (cost=56472.94..56672.94 rows=20000 width=56) (actual time=1683.939..1689.887 rows=19206 loops=1)
+               Group Key: pr.id
+               Batches: 1  Memory Usage: 3089kB
+               Buffers: shared hit=5378 read=25587
+               ->  Gather  (cost=51972.94..56172.94 rows=40000 width=56) (actual time=1658.703..1670.282 rows=57618 loops=1)
+                     Workers Planned: 2
+                     Workers Launched: 2
+                     Buffers: shared hit=5378 read=25587
+                     ->  Partial HashAggregate  (cost=50972.94..51172.94 rows=20000 width=56) (actual time=1655.245..1659.054 rows=19206 loops=3)
+                           Group Key: pr.id
+                           Batches: 1  Memory Usage: 3089kB
+                           Buffers: shared hit=5378 read=25587
+                           Worker 0:  Batches: 1  Memory Usage: 3089kB
+                           Worker 1:  Batches: 1  Memory Usage: 3089kB
+                           ->  Hash Join  (cost=26422.79..45345.85 rows=562709 width=48) (actual time=255.040..1333.919 rows=450000 loops=3)
+                                 Hash Cond: (i.produto_id = pr.id)
+                                 Buffers: shared hit=5378 read=25587
+                                 ->  Parallel Hash Join  (cost=25782.79..43228.43 rows=562709 width=12) (actual time=247.188..890.022 rows=450000 loops=3)
+                                       Hash Cond: (i.pedido_id = p.id)
+                                       Buffers: shared hit=4992 read=25397
+                                       ->  Parallel Seq Scan on itens_pedido i  (cost=0.00..15805.00 rows=625000 width=16) (actual time=0.277..374.418 rows=500000 loops=3)
+                                             Buffers: shared hit=384 read=9171
+                                       ->  Parallel Hash  (cost=23438.17..23438.17 rows=187570 width=4) (actual time=246.041..246.042 rows=150000 loops=3)
+                                             Buckets: 524288  Batches: 1  Memory Usage: 21760kB
+                                             Buffers: shared hit=4608 read=16226
+                                             ->  Parallel Seq Scan on pedidos p  (cost=0.00..23438.17 rows=187570 width=4) (actual time=0.117..114.846 rows=150000 loops=3)
+                                                   Filter: (status <> 'cancelado'::text)
+                                                   Rows Removed by Filter: 16667
+                                                   Buffers: shared hit=4608 read=16226
+                                 ->  Hash  (cost=390.00..390.00 rows=20000 width=40) (actual time=7.687..7.687 rows=20000 loops=3)
+                                       Buckets: 32768  Batches: 1  Memory Usage: 1696kB
+                                       Buffers: shared hit=380 read=190
+                                       ->  Seq Scan on produtos pr  (cost=0.00..390.00 rows=20000 width=40) (actual time=0.388..3.802 rows=20000 loops=3)
+                                             Buffers: shared hit=380 read=190
+ Planning:
+   Buffers: shared hit=186 read=7
+ Planning Time: 2.941 ms
+ Execution Time: 1694.640 ms
+(44 rows)
+
+--- execução 2 ---
+                                                                                 QUERY PLAN                                                                                 
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=57105.13..57105.16 rows=10 width=56) (actual time=1800.979..1803.519 rows=10 loops=1)
+   Buffers: shared hit=5766 read=25205
+   ->  Sort  (cost=57105.13..57155.13 rows=20000 width=56) (actual time=1800.977..1803.516 rows=10 loops=1)
+         Sort Key: (sum((i.quantidade * i.preco_unitario_centavos))) DESC, pr.id
+         Sort Method: top-N heapsort  Memory: 27kB
+         Buffers: shared hit=5766 read=25205
+         ->  Finalize HashAggregate  (cost=56472.94..56672.94 rows=20000 width=56) (actual time=1794.937..1800.084 rows=19206 loops=1)
+               Group Key: pr.id
+               Batches: 1  Memory Usage: 3089kB
+               Buffers: shared hit=5760 read=25205
+               ->  Gather  (cost=51972.94..56172.94 rows=40000 width=56) (actual time=1715.640..1729.216 rows=57605 loops=1)
+                     Workers Planned: 2
+                     Workers Launched: 2
+                     Buffers: shared hit=5760 read=25205
+                     ->  Partial HashAggregate  (cost=50972.94..51172.94 rows=20000 width=56) (actual time=1713.224..1717.146 rows=19202 loops=3)
+                           Group Key: pr.id
+                           Batches: 1  Memory Usage: 3089kB
+                           Buffers: shared hit=5760 read=25205
+                           Worker 0:  Batches: 1  Memory Usage: 3089kB
+                           Worker 1:  Batches: 1  Memory Usage: 3089kB
+                           ->  Hash Join  (cost=26422.79..45345.85 rows=562709 width=48) (actual time=282.449..1367.198 rows=450000 loops=3)
+                                 Hash Cond: (i.produto_id = pr.id)
+                                 Buffers: shared hit=5760 read=25205
+                                 ->  Parallel Hash Join  (cost=25782.79..43228.43 rows=562709 width=12) (actual time=276.768..1002.598 rows=450000 loops=3)
+                                       Hash Cond: (i.pedido_id = p.id)
+                                       Buffers: shared hit=5184 read=25205
+                                       ->  Parallel Seq Scan on itens_pedido i  (cost=0.00..15805.00 rows=625000 width=16) (actual time=0.358..378.238 rows=500000 loops=3)
+                                             Buffers: shared hit=480 read=9075
+                                       ->  Parallel Hash  (cost=23438.17..23438.17 rows=187570 width=4) (actual time=275.590..275.591 rows=150000 loops=3)
+                                             Buckets: 524288  Batches: 1  Memory Usage: 21760kB
+                                             Buffers: shared hit=4704 read=16130
+                                             ->  Parallel Seq Scan on pedidos p  (cost=0.00..23438.17 rows=187570 width=4) (actual time=0.119..167.334 rows=150000 loops=3)
+                                                   Filter: (status <> 'cancelado'::text)
+                                                   Rows Removed by Filter: 16667
+                                                   Buffers: shared hit=4704 read=16130
+                                 ->  Hash  (cost=390.00..390.00 rows=20000 width=40) (actual time=5.565..5.565 rows=20000 loops=3)
+                                       Buckets: 32768  Batches: 1  Memory Usage: 1696kB
+                                       Buffers: shared hit=570
+                                       ->  Seq Scan on produtos pr  (cost=0.00..390.00 rows=20000 width=40) (actual time=0.016..1.866 rows=20000 loops=3)
+                                             Buffers: shared hit=570
+ Planning:
+   Buffers: shared hit=193
+ Planning Time: 0.694 ms
+ Execution Time: 1804.553 ms
+(44 rows)
+

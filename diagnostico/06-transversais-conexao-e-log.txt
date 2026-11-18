@@ -1,0 +1,7 @@
+# Comando: scripts de leitura com curl e psql (pg_stat_database.sessions, docker compose logs api); data 2026-11-18
+## A: 100 x GET /clientes/1
+sessões abertas no banco: 10673 -> 10774 (diferença 101)
+bytes de log da API: 1645558 -> 1666360 (diferença 20802)
+## B: 20 x GET /pedidos?status=pago&pagina=1
+sessões abertas no banco: 10776 -> 10818 (diferença 42)
+bytes de log da API: 1666360 -> 1704680 (diferença 38320)

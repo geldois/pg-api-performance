@@ -1,0 +1,91 @@
+# Comando: EXPLAIN (ANALYZE, BUFFERS) das consultas de GET /clientes/:id/pedidos (cliente 4242, pedido 387071), via docker compose exec banco psql; data 2026-11-15
+## consulta dos pedidos do cliente
+--- execução 1 ---
+                                                          QUERY PLAN                                                           
+-------------------------------------------------------------------------------------------------------------------------------
+ Gather Merge  (cost=24438.20..24438.67 rows=4 width=300) (actual time=148.512..149.965 rows=5 loops=1)
+   Workers Planned: 2
+   Workers Launched: 2
+   Buffers: shared hit=222 read=20738
+   ->  Sort  (cost=23438.18..23438.18 rows=2 width=300) (actual time=145.492..145.499 rows=2 loops=3)
+         Sort Key: criado_em DESC, id DESC
+         Sort Method: quicksort  Memory: 25kB
+         Buffers: shared hit=222 read=20738
+         Worker 0:  Sort Method: quicksort  Memory: 26kB
+         Worker 1:  Sort Method: quicksort  Memory: 25kB
+         ->  Parallel Seq Scan on pedidos  (cost=0.00..23438.17 rows=2 width=300) (actual time=63.273..145.399 rows=2 loops=3)
+               Filter: (cliente_id = 4242)
+               Rows Removed by Filter: 166665
+               Buffers: shared hit=96 read=20738
+ Planning:
+   Buffers: shared hit=84
+ Planning Time: 0.309 ms
+ Execution Time: 150.057 ms
+(18 rows)
+
+--- execução 2 ---
+                                                          QUERY PLAN                                                           
+-------------------------------------------------------------------------------------------------------------------------------
+ Gather Merge  (cost=24438.20..24438.67 rows=4 width=300) (actual time=167.517..170.032 rows=5 loops=1)
+   Workers Planned: 2
+   Workers Launched: 2
+   Buffers: shared hit=318 read=20642
+   ->  Sort  (cost=23438.18..23438.18 rows=2 width=300) (actual time=164.316..164.324 rows=2 loops=3)
+         Sort Key: criado_em DESC, id DESC
+         Sort Method: quicksort  Memory: 26kB
+         Buffers: shared hit=318 read=20642
+         Worker 0:  Sort Method: quicksort  Memory: 25kB
+         Worker 1:  Sort Method: quicksort  Memory: 25kB
+         ->  Parallel Seq Scan on pedidos  (cost=0.00..23438.17 rows=2 width=300) (actual time=89.118..164.227 rows=2 loops=3)
+               Filter: (cliente_id = 4242)
+               Rows Removed by Filter: 166665
+               Buffers: shared hit=192 read=20642
+ Planning:
+   Buffers: shared hit=84
+ Planning Time: 0.224 ms
+ Execution Time: 170.097 ms
+(18 rows)
+
+## consulta dos itens de um pedido (a API repete esta por pedido)
+--- execução 1 ---
+                                                             QUERY PLAN                                                             
+------------------------------------------------------------------------------------------------------------------------------------
+ Sort  (cost=18367.94..18367.95 rows=4 width=20) (actual time=259.165..260.114 rows=2 loops=1)
+   Sort Key: id
+   Sort Method: quicksort  Memory: 25kB
+   Buffers: shared hit=3 read=9555
+   ->  Gather  (cost=1000.00..18367.90 rows=4 width=20) (actual time=258.710..259.703 rows=2 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         Buffers: shared read=9555
+         ->  Parallel Seq Scan on itens_pedido  (cost=0.00..17367.50 rows=2 width=20) (actual time=242.781..256.438 rows=1 loops=3)
+               Filter: (pedido_id = 387071)
+               Rows Removed by Filter: 499999
+               Buffers: shared read=9555
+ Planning:
+   Buffers: shared hit=71 read=2
+ Planning Time: 2.153 ms
+ Execution Time: 260.166 ms
+(16 rows)
+
+--- execução 2 ---
+                                                            QUERY PLAN                                                            
+----------------------------------------------------------------------------------------------------------------------------------
+ Sort  (cost=18367.94..18367.95 rows=4 width=20) (actual time=98.340..99.650 rows=2 loops=1)
+   Sort Key: id
+   Sort Method: quicksort  Memory: 25kB
+   Buffers: shared hit=99 read=9459
+   ->  Gather  (cost=1000.00..18367.90 rows=4 width=20) (actual time=98.272..99.602 rows=2 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         Buffers: shared hit=96 read=9459
+         ->  Parallel Seq Scan on itens_pedido  (cost=0.00..17367.50 rows=2 width=20) (actual time=92.258..95.699 rows=1 loops=3)
+               Filter: (pedido_id = 387071)
+               Rows Removed by Filter: 499999
+               Buffers: shared hit=96 read=9459
+ Planning:
+   Buffers: shared hit=73
+ Planning Time: 0.276 ms
+ Execution Time: 99.890 ms
+(16 rows)
+
