@@ -1,0 +1,17 @@
+Medição: 03-join-pedidos-do-cliente
+Carga: 20 usuários virtuais por 60s
+
+Requisições:        621
+Requisições/s:      9.77
+Tempo de resposta:  mediana 1400.6 ms | p95 4898.8 ms | p99 6908.1 ms
+Erros:              0.00%
+
+Por rota:
+rota                  req       mediana       p95           p99           erros   
+cliente               167       817.4 ms      1542.2 ms     1825.2 ms     0.0%    
+cliente-por-email     93        1339.6 ms     2142.4 ms     2701.5 ms     0.0%    
+pedidos-do-cliente    129       1861.9 ms     2773.3 ms     2981.9 ms     0.0%    
+pedidos-por-status    87        4241.3 ms     5822.2 ms     6531.7 ms     0.0%    
+busca-produtos        95        1040.6 ms     1900.1 ms     2495.5 ms     0.0%    
+vendas-por-dia        41        3000.9 ms     5711.5 ms     6688.6 ms     0.0%    
+top-produtos          9         8696.8 ms     17205.4 ms    17523.6 ms    0.0%    
