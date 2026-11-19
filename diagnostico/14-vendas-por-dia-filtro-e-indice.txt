@@ -1,0 +1,123 @@
+$ docker compose exec -T banco psql -U loja -d loja -c "EXPLAIN (ANALYZE, BUFFERS) <consulta de /relatorios/vendas-por-dia com o filtro novo, de 2025-06-10 a 2025-06-16>"  (2026-11-19, banco recriado com banco/06-indice-pedidos-criado-em.sql, depois da medição da 07)
+
+O plano "sem o índice" foi feito numa transação com DROP INDEX indice_pedidos_criado_em e ROLLBACK no fim, e o índice continuou no banco depois (conferido com \d pedidos).
+
+== Consulta da rota com o filtro novo, COM o índice, 1ª execução
+
+                                                                     QUERY PLAN
+-----------------------------------------------------------------------------------------------------------------------------------------------------
+ Gather  (cost=1107.09..25010.61 rows=13266 width=298) (actual time=2.234..204.459 rows=12935 loops=1)
+   Workers Planned: 2
+   Workers Launched: 2
+   Buffers: shared hit=16036 read=2276
+   ->  Nested Loop  (cost=107.09..22684.01 rows=5528 width=298) (actual time=0.782..198.356 rows=4312 loops=3)
+         Buffers: shared hit=16036 read=2276
+         ->  Parallel Bitmap Heap Scan on pedidos p  (cost=106.66..11666.66 rows=1842 width=290) (actual time=0.662..55.210 rows=1437 loops=3)
+               Recheck Cond: ((criado_em >= '2025-06-10'::date) AND (criado_em < '2025-06-17'::date))
+               Filter: (status <> 'cancelado'::text)
+               Rows Removed by Filter: 159
+               Heap Blocks: exact=349
+               Buffers: shared hit=171 read=842
+               ->  Bitmap Index Scan on indice_pedidos_criado_em  (cost=0.00..105.55 rows=4913 width=0) (actual time=1.455..1.455 rows=4786 loops=1)
+                     Index Cond: ((criado_em >= '2025-06-10'::date) AND (criado_em < '2025-06-17'::date))
+                     Buffers: shared hit=4 read=15
+         ->  Index Scan using indice_itens_pedido on itens_pedido i  (cost=0.43..5.94 rows=4 width=12) (actual time=0.098..0.099 rows=3 loops=4310)
+               Index Cond: (pedido_id = p.id)
+               Buffers: shared hit=15865 read=1434
+ Planning:
+   Buffers: shared hit=319 read=26
+ Planning Time: 3.274 ms
+ Execution Time: 204.996 ms
+(22 rows)
+
+== Consulta da rota com o filtro novo, COM o índice, 2ª execução
+
+                                                                     QUERY PLAN
+-----------------------------------------------------------------------------------------------------------------------------------------------------
+ Gather  (cost=1107.09..25010.61 rows=13266 width=298) (actual time=1.512..40.905 rows=12935 loops=1)
+   Workers Planned: 2
+   Workers Launched: 2
+   Buffers: shared hit=18309
+   ->  Nested Loop  (cost=107.09..22684.01 rows=5528 width=298) (actual time=0.421..24.982 rows=4312 loops=3)
+         Buffers: shared hit=18309
+         ->  Parallel Bitmap Heap Scan on pedidos p  (cost=106.66..11666.66 rows=1842 width=290) (actual time=0.400..1.422 rows=1437 loops=3)
+               Recheck Cond: ((criado_em >= '2025-06-10'::date) AND (criado_em < '2025-06-17'::date))
+               Filter: (status <> 'cancelado'::text)
+               Rows Removed by Filter: 159
+               Heap Blocks: exact=514
+               Buffers: shared hit=1010
+               ->  Bitmap Index Scan on indice_pedidos_criado_em  (cost=0.00..105.55 rows=4913 width=0) (actual time=0.952..0.952 rows=4786 loops=1)
+                     Index Cond: ((criado_em >= '2025-06-10'::date) AND (criado_em < '2025-06-17'::date))
+                     Buffers: shared hit=16
+         ->  Index Scan using indice_itens_pedido on itens_pedido i  (cost=0.43..5.94 rows=4 width=12) (actual time=0.009..0.016 rows=3 loops=4310)
+               Index Cond: (pedido_id = p.id)
+               Buffers: shared hit=17299
+ Planning:
+   Buffers: shared hit=16
+ Planning Time: 0.383 ms
+ Execution Time: 41.354 ms
+(22 rows)
+
+== Mesma consulta, SEM o índice (DROP INDEX numa transação desfeita), 1ª execução
+
+                                                                     QUERY PLAN
+----------------------------------------------------------------------------------------------------------------------------------------------------
+ Gather  (cost=1000.43..37823.79 rows=13266 width=298) (actual time=0.520..240.061 rows=12935 loops=1)
+   Workers Planned: 2
+   Workers Launched: 2
+   Buffers: shared hit=24407 read=13726
+   ->  Nested Loop  (cost=0.43..35497.19 rows=5528 width=298) (actual time=0.559..190.607 rows=4312 loops=3)
+         Buffers: shared hit=24407 read=13726
+         ->  Parallel Seq Scan on pedidos p  (cost=0.00..24479.83 rows=1842 width=290) (actual time=0.514..184.580 rows=1437 loops=3)
+               Filter: ((criado_em >= '2025-06-10'::date) AND (criado_em < '2025-06-17'::date) AND (status <> 'cancelado'::text))
+               Rows Removed by Filter: 165230
+               Buffers: shared hit=7108 read=13726
+         ->  Index Scan using indice_itens_pedido on itens_pedido i  (cost=0.43..5.94 rows=4 width=12) (actual time=0.003..0.003 rows=3 loops=4310)
+               Index Cond: (pedido_id = p.id)
+               Buffers: shared hit=17299
+ Planning:
+   Buffers: shared hit=23
+ Planning Time: 0.247 ms
+ Execution Time: 240.644 ms
+(17 rows)
+
+== Mesma consulta, SEM o índice, 2ª execução
+
+                                                                     QUERY PLAN
+----------------------------------------------------------------------------------------------------------------------------------------------------
+ Gather  (cost=1000.43..37823.79 rows=13266 width=298) (actual time=0.602..206.662 rows=12935 loops=1)
+   Workers Planned: 2
+   Workers Launched: 2
+   Buffers: shared hit=24503 read=13630
+   ->  Nested Loop  (cost=0.43..35497.19 rows=5528 width=298) (actual time=0.446..188.017 rows=4312 loops=3)
+         Buffers: shared hit=24503 read=13630
+         ->  Parallel Seq Scan on pedidos p  (cost=0.00..24479.83 rows=1842 width=290) (actual time=0.423..182.558 rows=1437 loops=3)
+               Filter: ((criado_em >= '2025-06-10'::date) AND (criado_em < '2025-06-17'::date) AND (status <> 'cancelado'::text))
+               Rows Removed by Filter: 165230
+               Buffers: shared hit=7204 read=13630
+         ->  Index Scan using indice_itens_pedido on itens_pedido i  (cost=0.43..5.94 rows=4 width=12) (actual time=0.002..0.003 rows=3 loops=4310)
+               Index Cond: (pedido_id = p.id)
+               Buffers: shared hit=17299
+ Planning:
+   Buffers: shared hit=16
+ Planning Time: 0.193 ms
+ Execution Time: 207.182 ms
+(17 rows)
+
+== Equivalência do filtro antigo (criado_em::date BETWEEN) e do novo (intervalo), em pedidos  (2026-11-19, antes do commit 5b537fd, banco com os dados da linha de base)
+
+$ docker compose exec -T banco psql -U loja -d loja -c "WITH r AS (SELECT min(criado_em)::date a, max(criado_em)::date b FROM pedidos), j AS (SELECT (a + (g*7 % (b-a+1)))::date AS ini, (g % 31) AS len FROM r, generate_series(0,399) g UNION ALL SELECT a, 30 FROM r UNION ALL SELECT b-30, 30 FROM r UNION ALL SELECT a, 0 FROM r UNION ALL SELECT b, 0 FROM r) SELECT count(*) AS janelas, sum((o.c<>n.c OR o.s<>n.s)::int) AS divergentes, min(o.c) AS min_pedidos, max(o.c) AS max_pedidos FROM j, LATERAL (SELECT count(*) c, coalesce(sum(id),0) s FROM pedidos WHERE criado_em::date BETWEEN ini AND ini+len AND status<>'cancelado') o, LATERAL (SELECT count(*) c, coalesce(sum(id),0) s FROM pedidos WHERE criado_em >= ini AND criado_em < (ini+len)+1 AND status<>'cancelado') n"
+
+ janelas | divergentes | min_pedidos | max_pedidos
+---------+-------------+-------------+-------------
+     404 |           0 |         610 |       19108
+(1 row)
+
+$ docker compose exec -T banco psql -U loja -d loja -c "SELECT min(criado_em), max(criado_em), count(*) FILTER (WHERE criado_em::time = '00:00:00') AS meia_noite FROM pedidos"
+
+         min         |         max         | meia_noite
+---------------------+---------------------+------------
+ 2024-01-01 00:02:01 | 2025-12-31 23:59:14 |          5
+(1 row)
+
+A comparação é de contagem de pedidos e soma dos ids por janela (404 janelas, de 1 a 31 dias, incluindo o primeiro e o último dia dos dados), e não da resposta inteira da rota. O contrato (42 respostas) foi conferido com "Contrato mantido" depois da mudança.

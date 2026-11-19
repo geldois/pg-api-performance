@@ -10,6 +10,7 @@ Uma linha por ideia aplicada na tabela, e os detalhes de cada uma na seção log
 | 04 | Pool com `max` 20, igual ao número de usuários da carga | [node-postgres, Pooling](https://node-postgres.com/features/pooling) e [node-postgres, Pool sizing](https://node-postgres.com/guides/pool-sizing) | Aplicada, sem ganho | 9,75 req/s, p95 5.123,3 ms | 9,66 req/s, p95 7.399,6 ms | Antes: `resultados/20261118-20*-03-join-pedidos-do-cliente` (3). Depois: `resultados/20261118-20*-04-pool-max-20` (3) | As rotas leves voltaram a ser rápidas, as pesadas ficaram mais lentas e o p95 geral piorou |
 | 05 | Índice `(status, criado_em DESC, id DESC)` em `pedidos` | [PostgreSQL 16, 11.4](https://www.postgresql.org/docs/16/indexes-ordering.html) e [PostgreSQL 16, 11.3](https://www.postgresql.org/docs/16/indexes-multicolumn.html) | Aplicada e medida | 9,66 req/s, p95 7.399,6 ms | 13,64 req/s, p95 4.738,1 ms | Antes: `resultados/20261118-20*-04-pool-max-20` (3). Depois: `resultados/20261118-21*-05-indice-pedidos-status` (3) | `pedidos-por-status` caiu de 9.358,0 para 3.259,3 ms e o req/s geral subiu |
 | 06 | Índice `(cliente_id, criado_em DESC, id DESC)` em `pedidos` | [PostgreSQL 16, 11.3](https://www.postgresql.org/docs/16/indexes-multicolumn.html) e [PostgreSQL 16, 11.4](https://www.postgresql.org/docs/16/indexes-ordering.html) | Aplicada e medida | 13,64 req/s, p95 4.738,1 ms | 19,6 req/s, p95 5.303,5 ms | Antes: `resultados/20261118-21*-05-indice-pedidos-status` (3). Depois: `resultados/20261119-*-06-indice-pedidos-cliente` (3) | `pedidos-do-cliente` caiu de 3.673,6 para 170,9 ms e o req/s subiu, com o p95 geral na mesma faixa |
+| 07 | Filtro por intervalo em `criado_em` e índice em `pedidos(criado_em)` | [PostgreSQL 16, 11.1](https://www.postgresql.org/docs/16/indexes-intro.html) e [PostgreSQL 16, 11.7](https://www.postgresql.org/docs/16/indexes-expressional.html) | Aplicada e medida | 19,6 req/s, p95 5.303,5 ms | 20,52 req/s, p95 2.718,4 ms | Antes: `resultados/20261119-125*-06-indice-pedidos-cliente` (3). Depois: as 5 pastas `resultados/20261119-*-07-indice-pedidos-criado-em` listadas na seção | `vendas-por-dia` caiu de 7.587,1 para 3.698,9 ms e o p95 geral caiu, mas quatro rotas ficaram mais lentas e o banco ficou instável sob o limite de memória |
 
 ## 01 Índice em `itens_pedido(pedido_id)`
 
@@ -254,3 +255,50 @@ Uma linha por ideia aplicada na tabela, e os detalhes de cada uma na seção log
 **Contra a hipótese do commit:** pelo critério do commit (o plano continuar com varredura sequencial em `pedidos`, ou o p95 de `pedidos-do-cliente` não cair), a hipótese não foi refutada: o plano usa o índice e o p95 da rota caiu. A parte "já em ordem" se confirmou só em parte: o índice acha os pedidos do cliente, mas o plano ainda ordena. A previsão de que as outras rotas poderiam melhorar de carona não se confirmou: nenhuma caiu sem sobreposição e duas subiram. A ressalva do commit, de que o ganho viria quase todo do `cliente_id`, é compatível com o plano, mas não foi testada.
 
 **O que refutaria:** o plano continuar com varredura sequencial em `pedidos`, ou o p95 de `pedidos-do-cliente` não cair.
+
+## 07 Filtro por intervalo em `criado_em` e índice em `pedidos(criado_em)`
+
+**Rótulo:** `07-indice-pedidos-criado-em`
+
+**Ideia e fonte:** reescrever o filtro de `/relatorios/vendas-por-dia` como intervalo na coluna pura (`criado_em >= $1::date AND criado_em < $2::date + 1`) e criar o índice comum `(criado_em)` em `pedidos`, em `banco/06-indice-pedidos-criado-em.sql`. Fontes: [PostgreSQL 16, 11.1 Introduction](https://www.postgresql.org/docs/16/indexes-intro.html), que diz que o sistema usa o índice "when it thinks doing so would be more efficient than a sequential table scan", e [PostgreSQL 16, 11.7 Indexes on Expressions](https://www.postgresql.org/docs/16/indexes-expressional.html), cujo exemplo é um índice em `lower(col1)` para consultas que usam essa mesma expressão. Acesso em 2026-11-18. Nenhuma das duas mede desempenho.
+
+**Status:** Aplicada e medida.
+
+**Hipótese** (commit `5b537fd`): criar o índice em `pedidos(criado_em)` e reescrever o filtro como intervalo na coluna pura deve reduzir o p95 de `/relatorios/vendas-por-dia`, porque o banco passa a ler só os pedidos do período, e não as 500 mil linhas de `pedidos`. O `criado_em::date` do filtro antigo impedia o uso de índice. Previsão: essa rota é a que mais ganha, com ganho limitado, porque a resposta ainda lê os itens dos pedidos do período e soma tudo no Node. As outras rotas não mudam diretamente. O que refutaria: o plano continuar com varredura sequencial em `pedidos`, ou o p95 da rota não cair.
+
+**Antes usado:** mudança 06.
+- `resultados/20261119-125052-06-indice-pedidos-cliente`
+- `resultados/20261119-125633-06-indice-pedidos-cliente`
+- `resultados/20261119-125805-06-indice-pedidos-cliente`
+
+**Depois:**
+- `resultados/20261119-142513-07-indice-pedidos-criado-em`
+- `resultados/20261119-142816-07-indice-pedidos-criado-em`
+- `resultados/20261119-143159-07-indice-pedidos-criado-em`
+- `resultados/20261119-143333-07-indice-pedidos-criado-em`
+- `resultados/20261119-151943-07-indice-pedidos-criado-em`
+
+**Commit medido:** os `contexto.txt` das cinco execuções citam `5b537fd`.
+
+**Equivalência e plano:** `diagnostico/14-vendas-por-dia-filtro-e-indice.txt`. O filtro novo devolveu a mesma contagem e a mesma soma de ids de pedidos que o antigo em 404 janelas de 1 a 31 dias, incluindo o primeiro e o último dia dos dados (a comparação é de pedidos, e não da resposta inteira, e o contrato de 42 respostas foi conferido depois da mudança). O plano com o índice usa `Bitmap Index Scan on indice_pedidos_criado_em` e a consulta isolada levou 204,996 ms na 1ª execução e 41,354 ms na 2ª. Sem o índice o plano é `Parallel Seq Scan` em `pedidos`, com 240,644 ms na 1ª execução e 207,182 ms na 2ª.
+
+**Execuções usadas e não usadas:** foram feitas 13 tentativas com o mesmo rótulo, 11 com pasta e 2 sem pasta. Valem as cinco com 0,00% de erros, contrato mantido e sem `oom_kill`, um critério definido por erros e falta de memória, e nunca pelo desempenho. As outras seis pastas ficaram fora, com erros de 0,07% a 82,24%, e as duas tentativas feitas com o swap do banco desligado nem geraram pasta. As cinco usadas tiveram swap diferente de zero no banco (de 16.429.056 a 30.023.680 bytes), o que é uma exceção à regra que valeu na 05 e na 06, em que só entraram execuções com swap zero. O banco chegou ao limite de 512 MiB (`memory.peak` igual ao limite) nas execuções 7 e 10 a 13, as únicas em que `memory.peak` foi lido, e na execução 6, que foi usada, houve `max 2` em `memory.events`. A tentativa de desligar o swap do banco fez o banco ser encerrado por falta de memória e foi desfeita. Todas as leituras estão em `diagnostico/13-memoria-do-banco-na-07.txt`.
+
+**Resultado** (medianas, antes → depois, com a faixa das execuções da 07 entre parênteses):
+- Requisições por segundo: 19,6 → 20,52 (19,97 a 21,59)
+- p95 geral: 5.303,5 → 2.718,4 ms (2.476,3 a 3.139,2)
+- p95 de `vendas-por-dia`: 7.587,1 → 3.698,9 ms (3.514,3 a 3.948,2)
+- p95 de `pedidos-por-status`: 3.147,0 → 4.381,6 ms
+- p95 de `top-produtos`: 29.349,1 → 32.719,5 ms
+- p95 de `busca-produtos`: 613,4 → 711,5 ms
+- p95 de `cliente`: 94,5 → 101,0 ms
+- p95 de `cliente-por-email`: 1.645,4 → 1.687,7 ms
+- p95 de `pedidos-do-cliente`: 170,9 → 188,5 ms
+- Memória média do banco: 415,3 → 431,8 MiB. Da API: 63,3 → 46,0 MiB
+- CPU: o CPU do `podman stats` não é confiável neste ambiente, então não é citado
+
+**Conclusão:** valeu para a rota alvo. O p95 de `vendas-por-dia` caiu de 7.587,1 para 3.698,9 ms, com faixas sem sobreposição (7.372,0 a 7.644,2 contra 3.514,3 a 3.948,2), e o plano deixou de ler `pedidos` inteira. O p95 geral também caiu, de 5.303,5 para 2.718,4 ms, sem sobreposição (4.659,7 a 5.560,0 contra 2.476,3 a 3.139,2). Explicação provável, ainda sem prova: o p95 geral é decidido pelas rotas mais lentas, e `vendas-por-dia` era uma delas. O req/s não mudou de forma clara, porque as faixas se sobrepõem (19,44 a 20,13 contra 19,97 a 21,59). Quatro rotas ficaram mais lentas, com faixas sem sobreposição: `pedidos-por-status`, `top-produtos`, `busca-produtos` e `cliente`. `cliente-por-email` ficou na mesma faixa, e `pedidos-do-cliente` ficou com pouca sobreposição (177,1 a 179,5 ms), com a mediana de 170,9 para 188,5 ms. Explicação provável, ainda sem prova: com `vendas-por-dia` mais rápida, o banco, limitado a 1 CPU, atende mais consultas das outras rotas ao mesmo tempo, e elas demoram mais. Não há medição de CPU confiável neste ambiente. A memória média do banco subiu de 415,3 para 431,8 MiB, mas a comparação sofre com o swap, e a da API caiu de 63,3 para 46,0 MiB, sem causa conhecida. Não medi o tamanho do índice novo nem separei quanto do ganho vem do filtro e quanto vem do índice. Nesta mudança o banco ficou instável sob o limite de 512 MiB, com erros de requisição em 6 das 11 execuções, e não isolei se a causa é o índice, a carga mais rápida ou outro fator.
+
+**Contra a hipótese do commit:** pelo critério do commit (o plano continuar com varredura sequencial em `pedidos`, ou o p95 da rota não cair), a hipótese não foi refutada: o plano usa o índice e o p95 de `vendas-por-dia` caiu. A previsão de ganho limitado não foi medida, porque não separei quanto do tempo restante vem da leitura dos itens e da soma no Node. A previsão de que as outras rotas não mudariam diretamente não impede o que se viu, porque o efeito nelas é indireto, mas quatro ficaram mais lentas.
+
+**O que refutaria:** o plano continuar com varredura sequencial em `pedidos`, ou o p95 de `vendas-por-dia` não cair.
