@@ -1,0 +1,79 @@
+$ docker compose exec -T banco psql -U loja -d loja -c "EXPLAIN (ANALYZE, BUFFERS) <consulta de /clientes/:id/pedidos com cli.id = 4242>"  (2026-11-19, banco recriado com banco/05-indice-pedidos-cliente.sql, depois da medição da 06)
+
+== Consulta da rota, cliente 4242, 1ª execução
+
+                                                                          QUERY PLAN
+--------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort  (cost=76.44..76.47 rows=15 width=61) (actual time=1.327..1.328 rows=10 loops=1)
+   Sort Key: ped.criado_em DESC, ped.id DESC, ite.id
+   Sort Method: quicksort  Memory: 25kB
+   Buffers: shared hit=55 read=12
+   ->  Nested Loop Left Join  (cost=1.43..76.14 rows=15 width=61) (actual time=0.341..1.293 rows=10 loops=1)
+         Buffers: shared hit=49 read=12
+         ->  Nested Loop Left Join  (cost=1.14..71.56 rows=15 width=34) (actual time=0.331..1.012 rows=10 loops=1)
+               Buffers: shared hit=20 read=11
+               ->  Nested Loop Left Join  (cost=0.71..28.87 rows=5 width=18) (actual time=0.301..0.597 rows=5 loops=1)
+                     Buffers: shared hit=5 read=6
+                     ->  Index Only Scan using clientes_pkey on clientes cli  (cost=0.29..4.31 rows=1 width=4) (actual time=0.043..0.043 rows=1 loops=1)
+                           Index Cond: (id = 4242)
+                           Heap Fetches: 0
+                           Buffers: shared hit=2 read=1
+                     ->  Index Scan using indice_pedidos_cliente on pedidos ped  (cost=0.42..24.51 rows=5 width=22) (actual time=0.256..0.550 rows=5 loops=1)
+                           Index Cond: (cliente_id = 4242)
+                           Buffers: shared hit=3 read=5
+               ->  Index Scan using indice_itens_pedido on itens_pedido ite  (cost=0.43..8.50 rows=4 width=20) (actual time=0.081..0.082 rows=2 loops=5)
+                     Index Cond: (pedido_id = ped.id)
+                     Buffers: shared hit=15 read=5
+         ->  Index Scan using produtos_pkey on produtos pro  (cost=0.29..0.31 rows=1 width=31) (actual time=0.027..0.027 rows=1 loops=10)
+               Index Cond: (id = ite.produto_id)
+               Buffers: shared hit=29 read=1
+ Planning:
+   Buffers: shared hit=284 read=22
+ Planning Time: 3.273 ms
+ Execution Time: 1.407 ms
+(27 rows)
+
+== Consulta da rota, cliente 4242, 2ª execução
+
+                                                                          QUERY PLAN
+--------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort  (cost=76.44..76.47 rows=15 width=61) (actual time=0.227..0.229 rows=10 loops=1)
+   Sort Key: ped.criado_em DESC, ped.id DESC, ite.id
+   Sort Method: quicksort  Memory: 25kB
+   Buffers: shared hit=67
+   ->  Nested Loop Left Join  (cost=1.43..76.14 rows=15 width=61) (actual time=0.103..0.194 rows=10 loops=1)
+         Buffers: shared hit=61
+         ->  Nested Loop Left Join  (cost=1.14..71.56 rows=15 width=34) (actual time=0.092..0.156 rows=10 loops=1)
+               Buffers: shared hit=31
+               ->  Nested Loop Left Join  (cost=0.71..28.87 rows=5 width=18) (actual time=0.068..0.080 rows=5 loops=1)
+                     Buffers: shared hit=11
+                     ->  Index Only Scan using clientes_pkey on clientes cli  (cost=0.29..4.31 rows=1 width=4) (actual time=0.040..0.041 rows=1 loops=1)
+                           Index Cond: (id = 4242)
+                           Heap Fetches: 0
+                           Buffers: shared hit=3
+                     ->  Index Scan using indice_pedidos_cliente on pedidos ped  (cost=0.42..24.51 rows=5 width=22) (actual time=0.025..0.036 rows=5 loops=1)
+                           Index Cond: (cliente_id = 4242)
+                           Buffers: shared hit=8
+               ->  Index Scan using indice_itens_pedido on itens_pedido ite  (cost=0.43..8.50 rows=4 width=20) (actual time=0.013..0.014 rows=2 loops=5)
+                     Index Cond: (pedido_id = ped.id)
+                     Buffers: shared hit=20
+         ->  Index Scan using produtos_pkey on produtos pro  (cost=0.29..0.31 rows=1 width=31) (actual time=0.003..0.003 rows=1 loops=10)
+               Index Cond: (id = ite.produto_id)
+               Buffers: shared hit=30
+ Planning:
+   Buffers: shared hit=306
+ Planning Time: 1.215 ms
+ Execution Time: 0.303 ms
+(27 rows)
+
+== Tamanho dos índices e da tabela
+
+$ docker compose exec -T banco psql -U loja -d loja -c "SELECT relname, pg_size_pretty(pg_relation_size(oid)), pg_relation_size(oid) FROM pg_class WHERE relname IN ('indice_pedidos_cliente','indice_pedidos','indice_itens_pedido','pedidos')"  (2026-11-19)
+
+        relname         | tamanho |   bytes
+------------------------+---------+-----------
+ indice_itens_pedido    | 21 MB   |  22003712
+ indice_pedidos         | 21 MB   |  22118400
+ indice_pedidos_cliente | 19 MB   |  20299776
+ pedidos                | 163 MB  | 170672128
+(4 rows)
