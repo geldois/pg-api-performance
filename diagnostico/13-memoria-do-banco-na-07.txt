@@ -1,0 +1,46 @@
+$ leitura de memory.swap.current, memory.swap.max, memory.peak e memory.events do cgroup do container do banco, depois de cada execução de scripts/medir.sh 07-indice-pedidos-criado-em  (2026-11-19, banco recriado com banco/06-indice-pedidos-criado-em.sql, commit medido 5b537fd)
+
+Limites lidos do cgroup do banco: memory.max = 536870912 (512 MiB) e memory.swap.max = 536870912 (padrão do container).
+Em todas as execuções abaixo, exceto as marcadas "swap desligado", memory.swap.max era 536870912.
+A coluna "erros" vem de resumo.txt de cada pasta. memory.peak do banco ficou em 536870912, igual ao limite, nas execuções em que foi lido (10 a 13).
+
+== Execuções 1 a 3 (primeira sequência, depois de recriar o banco)
+
+exec  pasta                                          erros    swap do banco após (bytes)  memory.events após
+1     20261119-142513-07-indice-pedidos-criado-em    0,00%    16429056                    max 0 oom 0 oom_kill 0
+2     20261119-142645-07-indice-pedidos-criado-em    0,07%    15368192                    max 0 oom 0 oom_kill 0
+3     20261119-142816-07-indice-pedidos-criado-em    0,00%    20037632                    max 0 oom 0 oom_kill 0
+
+Antes da execução 1: swap 0, sem eventos, nos dois containers. O swap da API ficou em 0 nas três.
+
+== Execuções 4 a 6 (depois de "docker compose restart")
+
+exec  pasta                                          erros    swap do banco após (bytes)  memory.events após
+4     20261119-143029-07-indice-pedidos-criado-em    0,21%    13877248                    max 0 oom 0 oom_kill 0
+5     20261119-143159-07-indice-pedidos-criado-em    0,00%    17985536                    max 0 oom 0 oom_kill 0
+6     20261119-143333-07-indice-pedidos-criado-em    0,00%    18284544                    max 2 oom 0 oom_kill 0
+
+Antes da execução 4: swap 0 e sem eventos. O swap da API ficou em 0.
+
+== Execuções 7 a 9 (swap do banco desligado com "docker update --memory 512m --memory-swap 512m desafio-performance-banco-1", memory.swap.max = 0)
+
+exec  pasta                                          erros     memory.events após
+7     20261119-151631-07-indice-pedidos-criado-em    82,24%    max 4734 oom 277 oom_kill 2 (memory.peak 536924160)
+8     sem pasta (o script terminou com exit 1)                  igual ao anterior
+9     sem pasta (o script terminou com exit 1)                  igual ao anterior
+
+Com o swap desligado o banco foi morto por falta de memória durante a carga. O swap foi religado recriando os containers (docker compose up -d --force-recreate, sem apagar o volume): memory.swap.max voltou a 536870912, os 3 índices de pedidos continuaram no banco e o contrato foi conferido ("Contrato mantido: as 42 respostas são iguais às gravadas").
+
+== Execuções 10 a 13 (containers reiniciados antes de cada uma)
+
+exec  pasta                                          erros     swap do banco após (bytes)  memory.events após
+10    20261119-151943-07-indice-pedidos-criado-em    0,00%     30023680                    max 0 oom 0 oom_kill 0
+11    20261119-152119-07-indice-pedidos-criado-em    0,29%     13426688                    max 0 oom 0 oom_kill 0
+12    20261119-152254-07-indice-pedidos-criado-em    35,55%    1802240                     max 0 oom 0 oom_kill 1
+13    20261119-152439-07-indice-pedidos-criado-em    0,54%     22884352                    max 0 oom 0 oom_kill 0
+
+Antes de cada uma: swap 0 e sem eventos, nos dois containers. Depois da execução 12 o cgroup da API não existia mais para leitura.
+
+== Critério de uso, definido por erros e por falta de memória, nunca pelo desempenho
+
+Valem as execuções com 0,00% de erros, contrato mantido e sem oom_kill: 1, 3, 5, 6 e 10 (pastas 142513, 142816, 143159, 143333 e 151943). Todas tiveram swap diferente de zero no banco. As outras seis pastas e as execuções 8 e 9 ficam fora da mediana.
