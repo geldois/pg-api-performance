@@ -9,6 +9,7 @@ Uma linha por ideia aplicada na tabela, e os detalhes de cada uma na seção log
 | 03 | Consulta única com `LEFT JOIN` em `/clientes/:id/pedidos` | [Rails Guides, N+1](https://guides.rubyonrails.org/active_record_querying.html) e [PostgreSQL 16, 7.2](https://www.postgresql.org/docs/16/queries-table-expressions.html) | Aplicada e medida | 9,12 req/s, p95 6.918,9 ms | 9,75 req/s, p95 5.123,3 ms | Antes: `resultados/20261118-18*-02-pool-de-conexoes` (3). Depois: `resultados/20261118-20*-03-join-pedidos-do-cliente` (3) | `pedidos-do-cliente` caiu de 8.513,6 para 2.773,3 ms, e as rotas leves pioraram |
 | 04 | Pool com `max` 20, igual ao número de usuários da carga | [node-postgres, Pooling](https://node-postgres.com/features/pooling) e [node-postgres, Pool sizing](https://node-postgres.com/guides/pool-sizing) | Aplicada, sem ganho | 9,75 req/s, p95 5.123,3 ms | 9,66 req/s, p95 7.399,6 ms | Antes: `resultados/20261118-20*-03-join-pedidos-do-cliente` (3). Depois: `resultados/20261118-20*-04-pool-max-20` (3) | As rotas leves voltaram a ser rápidas, as pesadas ficaram mais lentas e o p95 geral piorou |
 | 05 | Índice `(status, criado_em DESC, id DESC)` em `pedidos` | [PostgreSQL 16, 11.4](https://www.postgresql.org/docs/16/indexes-ordering.html) e [PostgreSQL 16, 11.3](https://www.postgresql.org/docs/16/indexes-multicolumn.html) | Aplicada e medida | 9,66 req/s, p95 7.399,6 ms | 13,64 req/s, p95 4.738,1 ms | Antes: `resultados/20261118-20*-04-pool-max-20` (3). Depois: `resultados/20261118-21*-05-indice-pedidos-status` (3) | `pedidos-por-status` caiu de 9.358,0 para 3.259,3 ms e o req/s geral subiu |
+| 06 | Índice `(cliente_id, criado_em DESC, id DESC)` em `pedidos` | [PostgreSQL 16, 11.3](https://www.postgresql.org/docs/16/indexes-multicolumn.html) e [PostgreSQL 16, 11.4](https://www.postgresql.org/docs/16/indexes-ordering.html) | Aplicada e medida | 13,64 req/s, p95 4.738,1 ms | 19,6 req/s, p95 5.303,5 ms | Antes: `resultados/20261118-21*-05-indice-pedidos-status` (3). Depois: `resultados/20261119-*-06-indice-pedidos-cliente` (3) | `pedidos-do-cliente` caiu de 3.673,6 para 170,9 ms e o req/s subiu, com o p95 geral na mesma faixa |
 
 ## 01 Índice em `itens_pedido(pedido_id)`
 
@@ -208,3 +209,48 @@ Uma linha por ideia aplicada na tabela, e os detalhes de cada uma na seção log
 **Contra a hipótese do commit:** pelo critério do commit (o p95 de `pedidos-por-status` não cair, ou o plano continuar com `Sort`), a hipótese não foi refutada: `pedidos-por-status` caiu e o plano da página funda não tem `Sort`, como previsto. A previsão de que o ganho seria maior nas páginas fundas do que nas primeiras não foi medida, porque o resumo da carga não separa a rota por página. A previsão de que as outras rotas só mudariam por efeito indireto da CPU livre não se confirmou em `cliente-por-email`, `busca-produtos` e `top-produtos`, que ficaram mais lentas.
 
 **O que refutaria:** o p95 de `pedidos-por-status` não cair, ou o plano da consulta continuar com `Sort`.
+
+## 06 Índice `(cliente_id, criado_em DESC, id DESC)` em `pedidos`
+
+**Rótulo:** `06-indice-pedidos-cliente`
+
+**Ideia e fonte:** criar o índice composto `(cliente_id, criado_em DESC, id DESC)` em `pedidos`, em `banco/05-indice-pedidos-cliente.sql`. Fontes: as mesmas da 05, [PostgreSQL 16, 11.3 Multicolumn Indexes](https://www.postgresql.org/docs/16/indexes-multicolumn.html) e [PostgreSQL 16, 11.4 Indexes and ORDER BY](https://www.postgresql.org/docs/16/indexes-ordering.html), acesso em 2026-11-18. Nenhuma das duas mede desempenho.
+
+**Status:** Aplicada e medida.
+
+**Hipótese** (commit `b9a29c6`): criar o índice deve reduzir o p95 de `/clientes/:id/pedidos`, porque o banco passa a achar os pedidos do cliente pelo índice, já em ordem (log N + k), em vez de ler as 500 mil linhas de `pedidos`. Previsão: essa rota é a que mais ganha. As outras não ganham diretamente, mas podem melhorar de carona se o banco, no teto de 1 CPU, passar a ter menos trabalho. O que refutaria: o plano continuar com varredura sequencial em `pedidos`, ou o p95 da rota não cair. Se o ganho vier quase todo do `cliente_id`, isso é esperado, porque com cerca de 5 pedidos por cliente o `Sort` já custava pouco.
+
+**Antes usado:** mudança 05.
+- `resultados/20261118-212211-05-indice-pedidos-status`
+- `resultados/20261118-212339-05-indice-pedidos-status`
+- `resultados/20261118-212508-05-indice-pedidos-status`
+
+**Depois:**
+- `resultados/20261119-125052-06-indice-pedidos-cliente`
+- `resultados/20261119-125633-06-indice-pedidos-cliente`
+- `resultados/20261119-125805-06-indice-pedidos-cliente`
+
+**Commit medido:** os `contexto.txt` das três execuções citam `b9a29c6`.
+
+**Plano da consulta com o índice:** `diagnostico/11-pedidos-do-cliente-com-indice.txt`. A consulta usa `Index Scan using indice_pedidos_cliente` em `pedidos`, sem varredura sequencial, e ainda tem um `Sort` no topo (10 linhas, quicksort em memória). O índice ocupa 19 MB, contra 163 MB da tabela.
+
+**Execuções não usadas:** duas execuções com o mesmo rótulo foram descartadas e apagadas, porque o banco terminou com swap diferente de zero. Depois disso os containers foram reiniciados com `docker compose restart` e o contrato foi conferido de novo. A primeira execução usada é anterior ao reinício e as outras duas são posteriores. As leituras de swap e de `memory.events` de todas as execuções estão em `diagnostico/12-memory-events-da-06.txt`.
+
+**Resultado** (medianas das três execuções, antes → depois):
+- Requisições por segundo: 13,64 → 19,6
+- p95 geral: 4.738,1 → 5.303,5 ms
+- p95 de `pedidos-do-cliente`: 3.673,6 → 170,9 ms
+- p95 de `pedidos-por-status`: 3.259,3 → 3.147,0 ms
+- p95 de `vendas-por-dia`: 7.288,1 → 7.587,1 ms
+- p95 de `top-produtos`: 26.775,9 → 29.349,1 ms
+- p95 de `cliente-por-email`: 1.507,6 → 1.645,4 ms
+- p95 de `busca-produtos`: 589,5 → 613,4 ms
+- p95 de `cliente`: 90,3 → 94,5 ms
+- Memória média do banco: 357,6 → 415,3 MiB. Da API: 48,2 → 63,3 MiB
+- CPU: o CPU do `podman stats` não é confiável neste ambiente, então não é citado
+
+**Conclusão:** valeu para a rota alvo. O p95 de `pedidos-do-cliente` caiu de 3.673,6 para 170,9 ms, com faixas sem sobreposição, e o req/s geral subiu de 13,64 para 19,6, também sem sobreposição (as três execuções ficaram entre 19,44 e 20,13). O plano passou a usar o índice e não lê mais a tabela inteira. O `Sort` continua no plano, então as colunas `criado_em DESC, id DESC` não tiraram a ordenação. Explicação provável, ainda sem prova: o `ORDER BY` da consulta inclui `ite.id`, que vem da junção com `itens_pedido`, e o índice não cobre essa coluna. Se for isso, o ganho vem só do `cliente_id`, e um índice só nessa coluna seria menor e daria o mesmo plano, o que não foi testado. O p95 geral subiu na mediana, de 4.738,1 para 5.303,5 ms, mas as faixas das execuções se sobrepõem (4.626,7 a 4.864,5 contra 4.659,7 a 5.560,0), então não dá para dizer que piorou. Explicação provável, ainda sem prova: o p95 geral é decidido pelas rotas mais lentas, `vendas-por-dia` e `top-produtos`, que juntas pesam 10% da carga e não ganharam com esta mudança. Entre as outras rotas, `cliente-por-email` e `top-produtos` subiram, com faixas sem sobreposição, e `cliente`, `pedidos-por-status`, `busca-produtos` e `vendas-por-dia` ficaram na mesma faixa. A memória média do banco subiu de 357,6 para 415,3 MiB, e a da API de 48,2 para 63,3 MiB, ambas sem sobreposição. O índice tem 19 MB, mas não medi quanto da alta de memória vem dele.
+
+**Contra a hipótese do commit:** pelo critério do commit (o plano continuar com varredura sequencial em `pedidos`, ou o p95 de `pedidos-do-cliente` não cair), a hipótese não foi refutada: o plano usa o índice e o p95 da rota caiu. A parte "já em ordem" se confirmou só em parte: o índice acha os pedidos do cliente, mas o plano ainda ordena. A previsão de que as outras rotas poderiam melhorar de carona não se confirmou: nenhuma caiu sem sobreposição e duas subiram. A ressalva do commit, de que o ganho viria quase todo do `cliente_id`, é compatível com o plano, mas não foi testada.
+
+**O que refutaria:** o plano continuar com varredura sequencial em `pedidos`, ou o p95 de `pedidos-do-cliente` não cair.
