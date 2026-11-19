@@ -1,0 +1,108 @@
+# Comando: banco descartável (docker run postgres:16.4, só banco/01-estrutura.sql e os dados escritos à mão abaixo, fora do volume do compose) e um script Node que sobe duas versões de api/src/rotas.js em portas diferentes (a de e3fe8e5, com N+1, e a de 1ae7302, com LEFT JOIN) e compara a resposta de GET /clientes/:id/pedidos; data 2026-11-18
+
+## Comandos executados (na raiz do repositório, com a pasta de trabalho do teste em <pasta>)
+git show 1ae7302^:api/src/rotas.js > <pasta>/src/rotas-antiga.js
+git show HEAD:api/src/rotas.js > <pasta>/src/rotas-nova.js
+git show HEAD:api/src/db.js > <pasta>/src/db.js
+docker run -d --name pg-borda -p 127.0.0.1:55432:5432 -e POSTGRES_USER=loja -e POSTGRES_DB=loja -e POSTGRES_HOST_AUTH_METHOD=trust docker.io/library/postgres:16.4
+until docker exec pg-borda pg_isready -U loja -d loja >/dev/null 2>&1; do sleep 1; done; sleep 2
+docker exec -i pg-borda psql -q -U loja -d loja < banco/01-estrutura.sql
+docker exec -i pg-borda psql -q -U loja -d loja < <pasta>/dados.sql
+docker run --rm --network host -e NODE_PATH=/app/node_modules -e DB_HOST=127.0.0.1 -e DB_PORT=55432 -v <pasta>:/t:ro --entrypoint node docker.io/library/desafio-performance-api:latest /t/teste.js
+docker rm -f pg-borda
+# 1ae7302^ é e3fe8e5. O rotas.js de HEAD é idêntico ao de 1ae7302. As duas versões usam o db.js de HEAD, que difere do de e3fe8e5 só no max: 20. A imagem desafio-performance-api tem o express e o pg do package-lock.json do repositório.
+
+## <pasta>/teste.js (compara o status e o texto do corpo das duas versões)
+const express = require('express');
+
+const antiga = require('./src/rotas-antiga');
+const nova = require('./src/rotas-nova');
+
+function subir(rotas, porta) {
+  const app = express();
+  app.use(rotas);
+  app.use((req, res) => res.status(404).json({ erro: 'rota nao encontrada' }));
+  app.use((erro, req, res, next) => {
+    res.status(500).json({ erro: 'erro interno' });
+  });
+  return new Promise((resolve) => {
+    const servidor = app.listen(porta, '127.0.0.1', () => resolve(servidor));
+  });
+}
+
+const casos = [
+  ['1', 'cliente sem pedidos'],
+  ['2', 'cliente com um pedido sem itens'],
+  ['3', 'cliente com pedido e itens, um produto repetido'],
+  ['4', 'cliente com dois pedidos na mesma data (desempate por id) e um deles sem itens'],
+  ['999', 'cliente inexistente'],
+  ['abc', 'id invalido'],
+  ['0', 'id zero'],
+];
+
+async function principal() {
+  const a = await subir(antiga, 3101);
+  const n = await subir(nova, 3102);
+  let falhas = 0;
+  for (const [id, descricao] of casos) {
+    const ra = await fetch(`http://127.0.0.1:3101/clientes/${id}/pedidos`);
+    const rn = await fetch(`http://127.0.0.1:3102/clientes/${id}/pedidos`);
+    const ta = await ra.text();
+    const tn = await rn.text();
+    const igual = ra.status === rn.status && ta === tn;
+    if (!igual) falhas += 1;
+    console.log(`${igual ? 'PASS' : 'FAIL'} /clientes/${id}/pedidos (${descricao}): status ${ra.status} contra ${rn.status}`);
+    console.log(`  antiga: ${ta}`);
+    console.log(`  nova:   ${tn}`);
+  }
+  console.log(falhas === 0 ? 'RESULTADO: todas as respostas iguais' : `RESULTADO: ${falhas} caso(s) diferente(s)`);
+  a.close();
+  n.close();
+  process.exit(falhas === 0 ? 0 : 1);
+}
+
+principal();
+
+## <pasta>/dados.sql (dados escritos à mão)
+INSERT INTO clientes (id, nome, email, cidade, criado_em) VALUES
+  (1, 'Cliente Sem Pedidos', 'a@teste.com', 'Salvador', '2026-01-01 00:00:00'),
+  (2, 'Cliente Pedido Vazio', 'b@teste.com', 'Salvador', '2026-01-01 00:00:00'),
+  (3, 'Cliente Com Itens', 'c@teste.com', 'Salvador', '2026-01-01 00:00:00'),
+  (4, 'Cliente Dois Pedidos', 'd@teste.com', 'Salvador', '2026-01-01 00:00:00');
+INSERT INTO produtos (id, nome, categoria, preco_centavos) VALUES
+  (10, 'Produto A', 'x', 1000),
+  (11, 'Produto B', 'x', 2500);
+INSERT INTO pedidos (id, cliente_id, status, criado_em, observacoes) VALUES
+  (100, 2, 'pago', '2026-02-01 10:00:00', ''),
+  (101, 3, 'pago', '2026-02-02 10:00:00', ''),
+  (102, 4, 'pago', '2026-02-03 10:00:00', ''),
+  (103, 4, 'entregue', '2026-02-03 10:00:00', '');
+INSERT INTO itens_pedido (id, pedido_id, produto_id, quantidade, preco_unitario_centavos) VALUES
+  (1000, 101, 10, 2, 1000),
+  (1001, 101, 11, 1, 2500),
+  (1002, 101, 10, 3, 900),
+  (1003, 102, 11, 4, 2400);
+
+## Saída
+PASS /clientes/1/pedidos (cliente sem pedidos): status 200 contra 200
+  antiga: []
+  nova:   []
+PASS /clientes/2/pedidos (cliente com um pedido sem itens): status 200 contra 200
+  antiga: [{"id":100,"status":"pago","criado_em":"2026-02-01T10:00:00.000Z","total_centavos":0,"itens":[]}]
+  nova:   [{"id":100,"status":"pago","criado_em":"2026-02-01T10:00:00.000Z","total_centavos":0,"itens":[]}]
+PASS /clientes/3/pedidos (cliente com pedido e itens, um produto repetido): status 200 contra 200
+  antiga: [{"id":101,"status":"pago","criado_em":"2026-02-02T10:00:00.000Z","total_centavos":7200,"itens":[{"produto_id":10,"produto_nome":"Produto A","quantidade":2,"preco_unitario_centavos":1000},{"produto_id":11,"produto_nome":"Produto B","quantidade":1,"preco_unitario_centavos":2500},{"produto_id":10,"produto_nome":"Produto A","quantidade":3,"preco_unitario_centavos":900}]}]
+  nova:   [{"id":101,"status":"pago","criado_em":"2026-02-02T10:00:00.000Z","total_centavos":7200,"itens":[{"produto_id":10,"produto_nome":"Produto A","quantidade":2,"preco_unitario_centavos":1000},{"produto_id":11,"produto_nome":"Produto B","quantidade":1,"preco_unitario_centavos":2500},{"produto_id":10,"produto_nome":"Produto A","quantidade":3,"preco_unitario_centavos":900}]}]
+PASS /clientes/4/pedidos (cliente com dois pedidos na mesma data (desempate por id) e um deles sem itens): status 200 contra 200
+  antiga: [{"id":103,"status":"entregue","criado_em":"2026-02-03T10:00:00.000Z","total_centavos":0,"itens":[]},{"id":102,"status":"pago","criado_em":"2026-02-03T10:00:00.000Z","total_centavos":9600,"itens":[{"produto_id":11,"produto_nome":"Produto B","quantidade":4,"preco_unitario_centavos":2400}]}]
+  nova:   [{"id":103,"status":"entregue","criado_em":"2026-02-03T10:00:00.000Z","total_centavos":0,"itens":[]},{"id":102,"status":"pago","criado_em":"2026-02-03T10:00:00.000Z","total_centavos":9600,"itens":[{"produto_id":11,"produto_nome":"Produto B","quantidade":4,"preco_unitario_centavos":2400}]}]
+PASS /clientes/999/pedidos (cliente inexistente): status 404 contra 404
+  antiga: {"erro":"cliente nao encontrado"}
+  nova:   {"erro":"cliente nao encontrado"}
+PASS /clientes/abc/pedidos (id invalido): status 400 contra 400
+  antiga: {"erro":"id invalido"}
+  nova:   {"erro":"id invalido"}
+PASS /clientes/0/pedidos (id zero): status 400 contra 400
+  antiga: {"erro":"id invalido"}
+  nova:   {"erro":"id invalido"}
+RESULTADO: todas as respostas iguais

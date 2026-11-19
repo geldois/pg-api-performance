@@ -1,0 +1,17 @@
+# Comando: leitura de memory.events do cgroup do banco (high, max, oom, oom_kill) e de memory.swap.current dos cgroups da api e do banco, antes e depois de cada execução da 05-indice-pedidos-status, em loop de 3 execuções com scripts/medir.sh; data 2026-11-18, banco recriado com banco/04-indice-pedidos.sql
+# As linhas abaixo são copiadas da saída do loop, sem as linhas em branco e sem o espaço no fim de cada linha.
+
+antes: high 0 max 45 oom 0 oom_kill 0  api swap 0; banco swap 0;
+depois: high 0 max 45 oom 0 oom_kill 0  api swap 0; banco swap 0;
+antes: high 0 max 45 oom 0 oom_kill 0  api swap 0; banco swap 0;
+depois: high 0 max 45 oom 0 oom_kill 0  api swap 0; banco swap 0;
+antes: high 0 max 45 oom 0 oom_kill 0  api swap 0; banco swap 0;
+depois: high 0 max 45 oom 0 oom_kill 0  api swap 0; banco swap 0;
+
+# As seis linhas são as leituras de antes e depois, em pares, das execuções resultados/20261118-212211-05-indice-pedidos-status, 20261118-212339-05-indice-pedidos-status e 20261118-212508-05-indice-pedidos-status.
+# O contador max do banco já marcava 45 antes da primeira execução e não subiu durante nenhuma das três. A causa provável é a recriação do banco (carga dos dados e construção dos índices), mas a leitura do contador logo depois da recriação não foi feita.
+
+# Execução extra de verificação (rótulo 05-indice-pedidos-status-verificacao, fora do repositório), só com memory.events do banco, lida antes e depois de scripts/medir.sh, mesma data:
+
+antes: high 0 max 45 oom 0 oom_kill 0
+depois: high 0 max 45 oom 0 oom_kill 0
