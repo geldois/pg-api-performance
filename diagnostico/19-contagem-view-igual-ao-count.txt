@@ -1,0 +1,16 @@
+$ docker compose exec -T banco psql -U loja -d loja -c "SELECT (SELECT count(*) FROM (SELECT status, count(*) FROM pedidos GROUP BY status EXCEPT SELECT status, total FROM contagem_pedidos_por_status) a) AS so_na_consulta, (SELECT count(*) FROM (SELECT status, total FROM contagem_pedidos_por_status EXCEPT SELECT status, count(*) FROM pedidos GROUP BY status) b) AS so_na_view" -c "SELECT v.status, v.total AS total_da_view, (SELECT count(*) FROM pedidos p WHERE p.status = v.status) AS count_direto FROM contagem_pedidos_por_status v ORDER BY v.status"  (2026-11-19, depois das medições da 09, banco recriado com banco/08-contagem-pedidos.sql)
+
+ so_na_consulta | so_na_view
+----------------+------------
+              0 |          0
+(1 row)
+
+  status   | total_da_view | count_direto
+-----------+---------------+--------------
+ cancelado |         50000 |        50000
+ entregue  |        125000 |       125000
+ pago      |        300000 |       300000
+ pendente  |         25000 |        25000
+(4 rows)
+
+A comparação é da view com a contagem direta no mesmo banco, depois das medições, e não da resposta inteira da rota. O contrato (42 respostas) foi conferido com "Contrato mantido" antes e depois das três execuções.

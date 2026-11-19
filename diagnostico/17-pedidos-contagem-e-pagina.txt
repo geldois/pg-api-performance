@@ -1,0 +1,91 @@
+$ docker compose exec -T banco psql -U loja -d loja < (as consultas abaixo, uma por bloco, com EXPLAIN (ANALYZE, BUFFERS) onde há plano)  (2026-11-19, antes de aplicar a 09: banco com o estado do commit 0e05c03, com 300.000 pedidos "pago", 125.000 "entregue", 50.000 "cancelado" e 25.000 "pendente")
+
+Os tempos são de um banco ocioso, com uma consulta por vez, e não são resultado de medição. O bloco C é a tentativa de juntar a contagem na consulta da página com "SELECT *, count(*)" sem GROUP BY, e o bloco D usa count(*) OVER () no lugar. Na saída original, o erro do bloco C apareceu depois do cabeçalho do D, porque o erro vai para um fluxo diferente da saída normal, e aqui ele foi colocado no bloco certo. Foram omitidas só as linhas em branco entre os blocos.
+
+== A: count(*) status=pago, 1a e 2a execucao
+                                                                              QUERY PLAN
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Finalize Aggregate  (cost=11323.30..11323.31 rows=1 width=8) (actual time=50.715..52.985 rows=1 loops=1)
+   Buffers: shared hit=1484
+   ->  Gather  (cost=11323.09..11323.30 rows=2 width=8) (actual time=50.636..52.979 rows=3 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         Buffers: shared hit=1484
+         ->  Partial Aggregate  (cost=10323.09..10323.10 rows=1 width=8) (actual time=40.699..40.700 rows=1 loops=3)
+               Buffers: shared hit=1484
+               ->  Parallel Index Only Scan using indice_pedidos on pedidos  (cost=0.42..10009.76 rows=125333 width=0) (actual time=0.266..35.629 rows=100000 loops=3)
+                     Index Cond: (status = 'pago'::text)
+                     Heap Fetches: 0
+                     Buffers: shared hit=1484
+ Planning:
+   Buffers: shared hit=129
+ Planning Time: 0.472 ms
+ Execution Time: 53.058 ms
+(16 rows)
+
+                                                                              QUERY PLAN
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Finalize Aggregate  (cost=11323.30..11323.31 rows=1 width=8) (actual time=22.660..25.624 rows=1 loops=1)
+   Buffers: shared hit=1486
+   ->  Gather  (cost=11323.09..11323.30 rows=2 width=8) (actual time=22.591..25.618 rows=3 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         Buffers: shared hit=1486
+         ->  Partial Aggregate  (cost=10323.09..10323.10 rows=1 width=8) (actual time=20.349..20.349 rows=1 loops=3)
+               Buffers: shared hit=1486
+               ->  Parallel Index Only Scan using indice_pedidos on pedidos  (cost=0.42..10009.76 rows=125333 width=0) (actual time=0.032..15.223 rows=100000 loops=3)
+                     Index Cond: (status = 'pago'::text)
+                     Heap Fetches: 0
+                     Buffers: shared hit=1486
+ Planning Time: 0.077 ms
+ Execution Time: 25.652 ms
+(14 rows)
+
+== B: pagina 1000 (OFFSET 19980) status=pago, 1a e 2a execucao
+                                                                  QUERY PLAN
+----------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=5813.32..5819.14 rows=20 width=299) (actual time=11.605..11.615 rows=20 loops=1)
+   Buffers: shared hit=20101
+   ->  Index Scan using indice_pedidos on pedidos  (cost=0.42..87513.97 rows=300800 width=299) (actual time=0.014..10.908 rows=20000 loops=1)
+         Index Cond: (status = 'pago'::text)
+         Buffers: shared hit=20101
+ Planning:
+   Buffers: shared hit=34 read=1
+ Planning Time: 0.150 ms
+ Execution Time: 11.631 ms
+(9 rows)
+
+                                                                  QUERY PLAN
+----------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=5813.32..5819.14 rows=20 width=299) (actual time=59.640..59.650 rows=20 loops=1)
+   Buffers: shared hit=20101
+   ->  Index Scan using indice_pedidos on pedidos  (cost=0.42..87513.97 rows=300800 width=299) (actual time=0.017..58.904 rows=20000 loops=1)
+         Index Cond: (status = 'pago'::text)
+         Buffers: shared hit=20101
+ Planning Time: 0.077 ms
+ Execution Time: 59.664 ms
+(7 rows)
+
+== C: a tentativa SELECT *, count(*) sem GROUP BY (página 1 de pago)
+ERROR:  column "pedidos.id" must appear in the GROUP BY clause or be used in an aggregate function
+LINE 1: SELECT *, count(*) AS total FROM pedidos WHERE status = 'pag...
+               ^
+
+== D: count(*) OVER () junto da pagina, pagina 1000 de pago
+                                                                      QUERY PLAN
+------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=6063.07..6069.14 rows=20 width=307) (actual time=509.843..509.850 rows=20 loops=1)
+   Buffers: shared hit=285499 read=15982, temp read=11828 written=11427
+   ->  WindowAgg  (cost=0.42..91273.97 rows=300800 width=307) (actual time=503.683..509.283 rows=20000 loops=1)
+         Buffers: shared hit=285499 read=15982, temp read=11828 written=11427
+         ->  Index Scan using indice_pedidos on pedidos  (cost=0.42..87513.97 rows=300800 width=299) (actual time=0.042..337.857 rows=300000 loops=1)
+               Index Cond: (status = 'pago'::text)
+               Buffers: shared hit=285499 read=15982
+ Planning Time: 0.167 ms
+ Execution Time: 513.409 ms
+(9 rows)
+
+== E: count(*) OVER () com página fora do intervalo (pendente, OFFSET 100000)
+ id | cliente_id | status | criado_em | observacoes | total
+----+------------+--------+-----------+-------------+-------
+(0 rows)

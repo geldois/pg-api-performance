@@ -1,0 +1,14 @@
+$ leitura de memory.swap.current, memory.swap.max, memory.max, cpu.max e memory.events do cgroup do container do banco e do da API, antes das execuções e depois de cada execução de scripts/medir.sh 09-pedidos-total-view  (2026-11-19, banco recriado com banco/08-contagem-pedidos.sql, commit medido 572195a)
+
+Limites lidos antes das execuções:
+- banco: cpu.max 100000 100000, memory.max 536870912 (512 MiB), memory.swap.max 536870912 (padrão do container)
+- api: cpu.max 50000 100000, memory.max 268435456 (256 MiB), memory.swap.max 268435456 (padrão do container)
+
+Antes da execução 1: memory.swap.current 0 nos dois containers, e memory.events dos dois com "low 0 high 0 max 0 oom 0 oom_kill 0 oom_group_kill 0".
+
+exec  pasta                                      erros   swap do banco após  swap da API após  memory.events após (banco e API)
+1     20261119-203628-09-pedidos-total-view      0,00%   0                   0                 low 0 high 0 max 0 oom 0 oom_kill 0 oom_group_kill 0
+2     20261119-203747-09-pedidos-total-view      0,00%   0                   0                 low 0 high 0 max 0 oom 0 oom_kill 0 oom_group_kill 0
+3     20261119-203908-09-pedidos-total-view      0,00%   0                   0                 low 0 high 0 max 0 oom 0 oom_kill 0 oom_group_kill 0
+
+Os containers não foram reiniciados entre as três execuções. memory.peak não foi lido. A coluna "erros" vem do resumo.txt de cada pasta, e o contrato terminou em "Contrato mantido: as 42 respostas são iguais às gravadas." nas três.

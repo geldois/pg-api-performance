@@ -12,6 +12,7 @@ Uma linha por ideia aplicada na tabela, e os detalhes de cada uma na seção log
 | 06 | Índice `(cliente_id, criado_em DESC, id DESC)` em `pedidos` | [PostgreSQL 16, 11.3](https://www.postgresql.org/docs/16/indexes-multicolumn.html) e [PostgreSQL 16, 11.4](https://www.postgresql.org/docs/16/indexes-ordering.html) | Aplicada e medida | 13,64 req/s, p95 4.738,1 ms | 19,6 req/s, p95 5.303,5 ms | Antes: `resultados/20261118-21*-05-indice-pedidos-status` (3). Depois: `resultados/20261119-*-06-indice-pedidos-cliente` (3) | `pedidos-do-cliente` caiu de 3.673,6 para 170,9 ms e o req/s subiu, com o p95 geral na mesma faixa |
 | 07 | Filtro por intervalo em `criado_em` e índice em `pedidos(criado_em)` | [PostgreSQL 16, 11.1](https://www.postgresql.org/docs/16/indexes-intro.html) e [PostgreSQL 16, 11.7](https://www.postgresql.org/docs/16/indexes-expressional.html) | Aplicada e medida | 19,6 req/s, p95 5.303,5 ms | 20,52 req/s, p95 2.718,4 ms | Antes: `resultados/20261119-125*-06-indice-pedidos-cliente` (3). Depois: as 5 pastas `resultados/20261119-*-07-indice-pedidos-criado-em` listadas na seção | `vendas-por-dia` caiu de 7.587,1 para 3.698,9 ms e o p95 geral caiu, mas quatro rotas ficaram mais lentas e o banco ficou instável sob o limite de memória |
 | 08 | `top-produtos` lê a view materializada `vendas_por_produto` | [PostgreSQL 16, 41.3 Materialized Views](https://www.postgresql.org/docs/16/rules-materializedviews.html) | Aplicada e medida | 20,52 req/s, p95 2.718,4 ms | 41,45 req/s, p95 1.644,1 ms | Antes: as 5 pastas `resultados/20261119-*-07-indice-pedidos-criado-em` listadas na seção 07. Depois: `resultados/20261119-19*-08-top-produtos-view` (3) | `top-produtos` caiu de 32.719,5 para 415,3 ms e o req/s dobrou, mas `cliente` e `pedidos-do-cliente` ficaram mais lentas |
+| 09 | `/pedidos` lê o total da view materializada `contagem_pedidos_por_status` | [PostgreSQL 16, 41.3 Materialized Views](https://www.postgresql.org/docs/16/rules-materializedviews.html) | Aplicada e medida | 41,45 req/s, p95 1.644,1 ms | 46,39 req/s, p95 1.532,5 ms | Antes: `resultados/20261119-19*-08-top-produtos-view` (3). Depois: `resultados/20261119-20*-09-pedidos-total-view` (3) | O req/s subiu e a mediana de `pedidos-por-status` caiu de 870,8 para 276,3 ms, mas o p95 da rota e o geral ficaram na mesma faixa |
 
 ## 01 Índice em `itens_pedido(pedido_id)`
 
@@ -350,3 +351,51 @@ Uma linha por ideia aplicada na tabela, e os detalhes de cada uma na seção log
 **Contra a hipótese do commit:** pelos dois critérios do commit, a hipótese não foi refutada: `top-produtos` caiu claramente de 32.719,5 ms, e o p95 geral melhorou. A previsão de que o p95 geral cairia se confirmou. O req/s dobrar não estava na hipótese. Não havia previsão sobre as outras rotas, e duas delas ficaram mais lentas.
 
 **O que refutaria:** `top-produtos` não cair claramente da mediana da 07 (32.719,5 ms de p95), ou o p95 geral não melhorar.
+
+## 09 `/pedidos` lê o total da view materializada `contagem_pedidos_por_status`
+
+**Rótulo:** `09-pedidos-total-view`
+
+**Ideia e fonte:** criar em `banco/08-contagem-pedidos.sql` a view materializada `contagem_pedidos_por_status`, com uma linha por status e o total de pedidos, e fazer a rota `/pedidos` ler o `total` dela em vez de contar as linhas a cada requisição. A consulta da página (`ORDER BY` e `OFFSET`) não mudou. Fonte: [PostgreSQL 16, 41.3 Materialized Views](https://www.postgresql.org/docs/16/rules-materializedviews.html), a mesma da 08, que diz que a view materializada guarda o resultado da consulta ("persist the results in a table-like form") e que "the data is not always current; yet sometimes current data is not needed". Acesso em 2026-11-19. A fonte não mede desempenho.
+
+**Status:** Aplicada e medida.
+
+**Hipótese** (commit `572195a`): a rota deixa de contar de 25 mil a 300 mil pedidos a cada requisição, porque mesmo com índice o `count` visita cada linha do status (O(n)). A contagem por status é feita uma vez, na criação do banco, e a rota só lê o total pronto, então `pedidos-por-status` deve ficar mais rápida e o p95 geral deve cair. O custo é que a view não se atualiza sozinha: serve aqui porque a API só tem rotas `GET` e os dados não mudam durante o uso. O que refutaria: `pedidos-por-status` não cair claramente da mediana anterior (2.222,9 ms de p95 na 08), ou o p95 geral não melhorar.
+
+**Antes usado:** mudança 08.
+- `resultados/20261119-195347-08-top-produtos-view`
+- `resultados/20261119-195507-08-top-produtos-view`
+- `resultados/20261119-195628-08-top-produtos-view`
+
+**Depois:**
+- `resultados/20261119-203628-09-pedidos-total-view`
+- `resultados/20261119-203747-09-pedidos-total-view`
+- `resultados/20261119-203908-09-pedidos-total-view`
+
+**Commit medido:** os `contexto.txt` das três execuções citam `572195a`, com `arquivos alterados sem commit: 0`. O banco foi recriado (`docker compose down -v` e `up -d --build`) para criar a view, e o contrato terminou em "Contrato mantido" (42 respostas) ao fim de cada uma das três medições.
+
+**Planos:** `diagnostico/17-pedidos-contagem-e-pagina.txt`, tirado antes da mudança, com o banco ocioso. O `count(*)` de `pago` (300.000 pedidos) usa `Parallel Index Only Scan using indice_pedidos`, com `Heap Fetches: 0`, e levou 53,058 ms na 1ª execução e 25,652 ms na 2ª. A consulta da página 1000 (`OFFSET 19980`) usa `Index Scan using indice_pedidos`, lê 20.000 linhas e levou 11,631 ms e 59,664 ms. A tentativa de juntar a contagem na consulta da página com `SELECT *, count(*)` dá erro de SQL, e a alternativa com `count(*) OVER ()` levou 513,409 ms e devolve 0 linhas, sem total, para uma página fora do intervalo. A view tem as mesmas 4 contagens que o `count(*)` direto (50.000, 125.000, 300.000 e 25.000, sem diferença nos dois sentidos), conferido depois das medições em `diagnostico/19-contagem-view-igual-ao-count.txt`.
+
+**Execuções usadas e não usadas:** três tentativas, três pastas, todas usadas. As três tiveram 0,00% de erros, contrato mantido, swap do banco e da API em 0 ao fim de cada execução e nenhum evento em `memory.events` (`diagnostico/18-memoria-do-banco-na-09.txt`; o `memory.peak` não foi lido, então o que se sabe é o swap ao fim de cada execução, e não durante a carga).
+
+**Resultado** (medianas, antes → depois, com a faixa das execuções da 09 entre parênteses):
+- Requisições por segundo: 41,45 → 46,39 (46,26 a 46,86)
+- p95 geral: 1.644,1 → 1.532,5 ms (1.516,4 a 1.616,9)
+- Mediana geral: 259,2 → 198,5 ms (196,3 a 220,5)
+- p95 de `pedidos-por-status`: 2.222,9 → 2.026,7 ms (1.892,8 a 2.217,2)
+- Mediana de `pedidos-por-status`: 870,8 → 276,3 ms (259,5 a 295,6)
+- Requisições de `pedidos-por-status` por execução: 351 → 394 (393 a 397)
+- p95 de `vendas-por-dia`: 2.505,4 → 2.311,1 ms (2.239,9 a 2.328,4)
+- p95 de `busca-produtos`: 731,0 → 819,3 ms (792,6 a 834,2)
+- p95 de `cliente`: 353,9 → 419,7 ms (395,3 a 443,0)
+- p95 de `cliente-por-email`: 1.535,2 → 1.578,3 ms (1.487,5 a 1.606,4)
+- p95 de `pedidos-do-cliente`: 422,3 → 417,1 ms (402,2 a 485,7)
+- p95 de `top-produtos`: 415,3 → 604,4 ms (396,8 a 659,0)
+- Memória média do banco: 275,6 → 236,4 MiB (227,8 a 239,7). Da API: 49,2 → 51,5 MiB (49,6 a 53,9)
+- CPU: o CPU do `podman stats` não é confiável neste ambiente, então não é citado
+
+**Conclusão:** valeu em parte. O req/s subiu de 41,45 para 46,39, com faixas sem sobreposição (41,19 a 41,87 contra 46,26 a 46,86), e a mediana de `pedidos-por-status` caiu de 870,8 para 276,3 ms, sem sobreposição (787,5 a 888,7 contra 259,5 a 295,6). A mediana geral também caiu, de 259,2 para 198,5 ms (234,4 a 286,7 contra 196,3 a 220,5). Mas o p95 da rota (2.211,0 a 2.305,4 contra 1.892,8 a 2.217,2) e o p95 geral (1.579,4 a 1.659,8 contra 1.516,4 a 1.616,9) ficaram na mesma faixa, com sobreposição. Explicação provável, ainda sem prova: o `count` pesava na requisição típica, e por isso a mediana caiu, mas o p95 vem das páginas com `OFFSET` grande, em que a consulta da página ainda lê e descarta até 19.980 linhas, e isso não mudou. O bloco B de `diagnostico/17` só mostra que a página 1000 lê 20.000 linhas, com 11,631 e 59,664 ms no banco ocioso. A ligação disso com o p95 de cerca de 2 s sob carga (a disputa por CPU, por exemplo) não foi medida, e eu não separei o tempo por número de página. `vendas-por-dia` caiu sem sobreposição e `busca-produtos` subiu sem sobreposição, sem que a mudança as tocasse. As demais rotas ficaram na mesma faixa, e `top-produtos` tem 47 a 48 requisições por execução, então o p95 dela vem de poucas amostras. A memória média do banco caiu de 275,6 para 236,4 MiB, sem causa conhecida. Custo: a view não se atualiza sozinha e só serve porque os dados não mudam durante o uso. Não medi o tamanho nem o tempo de criação da view.
+
+**Contra a hipótese do commit:** o commit tinha dois critérios de refutação. No primeiro, o p95 de `pedidos-por-status` caiu da mediana de 2.222,9 para 2.026,7 ms e as três execuções da 09 ficaram abaixo dela (1.892,8, 2.026,7 e 2.217,2), mas a execução 2 ficou só 5,7 ms abaixo e as faixas se sobrepõem em um trecho pequeno (2.211,0 a 2.217,2). Usei a sobreposição das faixas como regra de "claramente", então a condição de refutação se cumpriu: a queda do p95 da rota não é clara. No segundo, o p95 geral melhorou na mediana, de 1.644,1 para 1.532,5 ms, com as três execuções da 09 abaixo da mediana da 08, embora as faixas se sobreponham, então a condição de refutação não se cumpriu. Em resumo, a hipótese foi refutada só pelo primeiro critério, com a ressalva de que a queda do p95 da rota existe e está dentro do ruído, e a previsão de que a rota ficaria mais rápida se confirmou na mediana. O req/s subir não estava na hipótese.
+
+**O que refutaria:** `pedidos-por-status` não cair claramente da mediana anterior (2.222,9 ms de p95 na 08), ou o p95 geral não melhorar.
