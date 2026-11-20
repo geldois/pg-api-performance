@@ -13,6 +13,7 @@ Uma linha por ideia aplicada na tabela, e os detalhes de cada uma na seção log
 | 07 | Filtro por intervalo em `criado_em` e índice em `pedidos(criado_em)` | [PostgreSQL 16, 11.1](https://www.postgresql.org/docs/16/indexes-intro.html) e [PostgreSQL 16, 11.7](https://www.postgresql.org/docs/16/indexes-expressional.html) | Aplicada e medida | 19,6 req/s, p95 5.303,5 ms | 20,52 req/s, p95 2.718,4 ms | Antes: `resultados/20261119-125*-06-indice-pedidos-cliente` (3). Depois: as 5 pastas `resultados/20261119-*-07-indice-pedidos-criado-em` listadas na seção | `vendas-por-dia` caiu de 7.587,1 para 3.698,9 ms e o p95 geral caiu, mas quatro rotas ficaram mais lentas e o banco ficou instável sob o limite de memória |
 | 08 | `top-produtos` lê a view materializada `vendas_por_produto` | [PostgreSQL 16, 41.3 Materialized Views](https://www.postgresql.org/docs/16/rules-materializedviews.html) | Aplicada e medida | 20,52 req/s, p95 2.718,4 ms | 41,45 req/s, p95 1.644,1 ms | Antes: as 5 pastas `resultados/20261119-*-07-indice-pedidos-criado-em` listadas na seção 07. Depois: `resultados/20261119-19*-08-top-produtos-view` (3) | `top-produtos` caiu de 32.719,5 para 415,3 ms e o req/s dobrou, mas `cliente` e `pedidos-do-cliente` ficaram mais lentas |
 | 09 | `/pedidos` lê o total da view materializada `contagem_pedidos_por_status` | [PostgreSQL 16, 41.3 Materialized Views](https://www.postgresql.org/docs/16/rules-materializedviews.html) | Aplicada e medida | 41,45 req/s, p95 1.644,1 ms | 46,39 req/s, p95 1.532,5 ms | Antes: `resultados/20261119-19*-08-top-produtos-view` (3). Depois: `resultados/20261119-20*-09-pedidos-total-view` (3) | O req/s subiu e a mediana de `pedidos-por-status` caiu de 870,8 para 276,3 ms, mas o p95 da rota e o geral ficaram na mesma faixa |
+| 10 | Índice `(status, criado_em DESC, id DESC) INCLUDE (cliente_id)` no lugar do `indice_pedidos`, e a página de `/pedidos` só com as 4 colunas da resposta | [PostgreSQL 16, 11.9 Index-Only Scans and Covering Indexes](https://www.postgresql.org/docs/16/indexes-index-only-scans.html) e [PostgreSQL 16, CREATE INDEX](https://www.postgresql.org/docs/16/sql-createindex.html) | Aplicada e medida | 46,39 req/s, p95 1.532,5 ms | 52,09 req/s, p95 1.298,8 ms | Antes: `resultados/20261119-20*-09-pedidos-total-view` (3). Depois: `resultados/20261119-22*-10-pedidos-indice-cobrindo` (3) | O p95 de `pedidos-por-status` caiu de 2.026,7 para 683,4 ms e o p95 geral também caiu, mas `cliente`, `pedidos-do-cliente` e `busca-produtos` ficaram mais lentas |
 
 ## 01 Índice em `itens_pedido(pedido_id)`
 
@@ -399,3 +400,51 @@ Uma linha por ideia aplicada na tabela, e os detalhes de cada uma na seção log
 **Contra a hipótese do commit:** o commit tinha dois critérios de refutação. No primeiro, o p95 de `pedidos-por-status` caiu da mediana de 2.222,9 para 2.026,7 ms e as três execuções da 09 ficaram abaixo dela (1.892,8, 2.026,7 e 2.217,2), mas a execução 2 ficou só 5,7 ms abaixo e as faixas se sobrepõem em um trecho pequeno (2.211,0 a 2.217,2). Usei a sobreposição das faixas como regra de "claramente", então a condição de refutação se cumpriu: a queda do p95 da rota não é clara. No segundo, o p95 geral melhorou na mediana, de 1.644,1 para 1.532,5 ms, com as três execuções da 09 abaixo da mediana da 08, embora as faixas se sobreponham, então a condição de refutação não se cumpriu. Em resumo, a hipótese foi refutada só pelo primeiro critério, com a ressalva de que a queda do p95 da rota existe e está dentro do ruído, e a previsão de que a rota ficaria mais rápida se confirmou na mediana. O req/s subir não estava na hipótese.
 
 **O que refutaria:** `pedidos-por-status` não cair claramente da mediana anterior (2.222,9 ms de p95 na 08), ou o p95 geral não melhorar.
+
+## 10 Índice com `INCLUDE (cliente_id)` e página de `/pedidos` só com as 4 colunas da resposta
+
+**Rótulo:** `10-pedidos-indice-cobrindo`
+
+**Ideia e fonte:** trocar o `indice_pedidos` `(status, criado_em DESC, id DESC)` por um índice com a mesma chave e `INCLUDE (cliente_id)`, em `banco/09-indice-pedidos-incluindo-cliente-id.sql` (cria o novo e depois apaga o antigo), e pedir na consulta da página de `/pedidos` só as 4 colunas que a rota já devolvia (`id`, `cliente_id`, `status`, `criado_em`) em vez de `SELECT *`. Fontes: [PostgreSQL 16, 11.9 Index-Only Scans and Covering Indexes](https://www.postgresql.org/docs/16/indexes-index-only-scans.html), que diz "The query must reference only columns stored in the index" e que o `INCLUDE` serve a consultas que só leem o índice, e [PostgreSQL 16, CREATE INDEX](https://www.postgresql.org/docs/16/sql-createindex.html), que diz que as colunas do `INCLUDE` são "non-key columns", que "an index-only scan can return the contents of non-key columns without having to visit the index's table" e que "It's wise to be conservative about adding non-key columns to an index". Acesso em 2026-11-19. Nenhuma das duas mede desempenho.
+
+**Status:** Aplicada e medida.
+
+**Hipótese** (commit `883beec`): a página de `/pedidos` deixa de buscar na tabela as até 19.980 linhas que o `OFFSET` pula. Com o `cliente_id` guardado só como carga nas folhas do índice, as 4 colunas da rota saem do próprio índice (`Index Only Scan`), então o p95 de `pedidos-por-status` deve cair. O custo é um índice que também guarda o `cliente_id`, e o índice antigo é apagado em seguida para não ficar repetido. O que refutaria: o p95 de `pedidos-por-status` não cair claramente da mediana anterior (2.026,7 ms na 09), ou o p95 geral não melhorar.
+
+**Antes usado:** mudança 09.
+- `resultados/20261119-203628-09-pedidos-total-view`
+- `resultados/20261119-203747-09-pedidos-total-view`
+- `resultados/20261119-203908-09-pedidos-total-view`
+
+**Depois:**
+- `resultados/20261119-221323-10-pedidos-indice-cobrindo`
+- `resultados/20261119-221442-10-pedidos-indice-cobrindo`
+- `resultados/20261119-221602-10-pedidos-indice-cobrindo`
+
+**Commit medido:** os `contexto.txt` das três execuções citam `883beec`, com `arquivos alterados sem commit: 0`. O banco foi recriado (`docker compose down -v` e `up -d --build`) para aplicar o `.sql`, o `pedidos` ficou com 4 índices (`indice_pedidos_cliente`, `indice_pedidos_criado_em`, `indice_pedidos_incluindo_cliente_id` e `pedidos_pkey`, listados em `diagnostico/22-indices-de-pedidos-na-10.txt`), e o contrato terminou em "Contrato mantido" (42 respostas) ao fim de cada uma das três medições.
+
+**Planos:** `diagnostico/20-pedidos-pagina-e-indice-cobrindo.txt`, tirados antes da mudança, com o banco ocioso e na página 1000 de `pago` (`OFFSET 19980`). A consulta de 4 colunas com o índice antigo usa `Index Scan` e lê 20.000 linhas na tabela, e levou 14,869 e 10,969 ms (1ª e 2ª execução). Com o mesmo índice, a consulta sem o `cliente_id` usa `Index Only Scan` com `Heap Fetches: 0` e levou 3,870 e 3,807 ms, o que mostra que o `cliente_id` fora do índice era o que forçava a ida à tabela. Com o índice com `INCLUDE (cliente_id)` no lugar do antigo (criado numa transação desfeita), a consulta de 4 colunas passou a usar `Index Only Scan`, com `Heap Fetches: 0`, em 3,745 e 3,321 ms. O índice com `INCLUDE` teve o mesmo tamanho do antigo, 22.118.400 bytes (21 MB), e levou 1.032,762 ms para ser criado. No banco recriado com a mudança, o índice novo também tem 22.118.400 bytes (`diagnostico/22-indices-de-pedidos-na-10.txt`), e a documentação avisa que colunas do `INCLUDE` "bloat the size of the index", então esse tamanho igual vale só para estes dados. Também testei uma subconsulta de `id` seguida de 20 buscas pela chave, que levou 9,476 e 3,878 ms e não foi a escolhida. Criar o índice novo sem apagar o antigo também foi testado: o planejador escolhe o novo, e os dois ocupam 22.118.400 bytes cada, por isso o antigo é apagado no mesmo arquivo.
+
+**Execuções usadas e não usadas:** três tentativas, três pastas, todas usadas. As três tiveram 0,00% de erros, contrato mantido, swap do banco e da API em 0 ao fim de cada execução e nenhum evento em `memory.events` (`diagnostico/21-memoria-do-banco-na-10.txt`; o `memory.peak` não foi lido, então o que se sabe é o swap ao fim de cada execução, e não durante a carga).
+
+**Resultado** (medianas, antes → depois, com a faixa das execuções da 10 entre parênteses):
+- Requisições por segundo: 46,39 → 52,09 (52,01 a 52,86)
+- p95 geral: 1.532,5 → 1.298,8 ms (1.188,7 a 1.313,4)
+- Mediana geral: 198,5 → 223,0 ms (189,1 a 241,8)
+- p95 de `pedidos-por-status`: 2.026,7 → 683,4 ms (640,1 a 761,5)
+- Mediana de `pedidos-por-status`: 276,3 → 97,5 ms (95,2 a 108,6)
+- Requisições de `pedidos-por-status` por execução: 394 → 459 (453 a 461)
+- p95 de `vendas-por-dia`: 2.311,1 → 1.693,7 ms (1.618,7 a 1.723,8)
+- p95 de `busca-produtos`: 819,3 → 873,1 ms (861,1 a 1.026,6)
+- p95 de `cliente`: 419,7 → 585,8 ms (481,8 a 599,0)
+- p95 de `cliente-por-email`: 1.578,3 → 1.616,0 ms (1.577,6 a 1.619,4)
+- p95 de `pedidos-do-cliente`: 417,1 → 533,5 ms (499,7 a 599,1)
+- p95 de `top-produtos`: 604,4 → 597,5 ms (407,1 a 642,3)
+- Memória média do banco: 236,4 → 215,1 MiB (215,0 a 215,6). Da API: 51,5 → 48,2 MiB (44,8 a 48,5)
+- CPU: o CPU do `podman stats` não é confiável neste ambiente, então não é citado
+
+**Conclusão:** valeu. O p95 de `pedidos-por-status` caiu de 2.026,7 para 683,4 ms, com faixas sem sobreposição (1.892,8 a 2.217,2 contra 640,1 a 761,5), e a mediana da rota caiu de 276,3 para 97,5 ms. O p95 geral também caiu, de 1.532,5 para 1.298,8 ms (1.516,4 a 1.616,9 contra 1.188,7 a 1.313,4), e o req/s subiu de 46,39 para 52,09 (46,26 a 46,86 contra 52,01 a 52,86), os dois sem sobreposição. Explicação provável, ainda sem prova: o `OFFSET` deixou de buscar na tabela as linhas puladas, e isso pesava na cauda da rota, que vem das páginas com `OFFSET` grande. Não separei o tempo por número de página, e a ligação entre o plano de banco ocioso e o p95 sob carga não foi medida. `vendas-por-dia` também caiu sem sobreposição (2.239,9 a 2.328,4 contra 1.618,7 a 1.723,8), sem que a mudança a tocasse, e a mediana geral subiu de 198,5 para 223,0 ms, mas na mesma faixa, porque as faixas se sobrepõem (196,3 a 220,5 contra 189,1 a 241,8). Três rotas ficaram mais lentas, com faixas sem sobreposição: `cliente` (395,3 a 443,0 contra 481,8 a 599,0), `pedidos-do-cliente` (402,2 a 485,7 contra 499,7 a 599,1, com margem de 14 ms) e `busca-produtos` (792,6 a 834,2 contra 861,1 a 1.026,6). Explicação provável, ainda sem prova: com mais requisições por segundo, o banco, limitado a 1 CPU, atende mais consultas ao mesmo tempo e as rotas leves esperam mais, o mesmo padrão registrado nas mudanças anteriores. Não há medição de CPU confiável neste ambiente para confirmar isso. `cliente-por-email` e `top-produtos` ficaram na mesma faixa, e `top-produtos` tem 49 a 50 requisições por execução, então o p95 dela vem de poucas amostras. A memória média do banco caiu de 236,4 para 215,1 MiB e a da API de 51,5 para 48,2 MiB, sem causa conhecida. Custo: o índice guarda o `cliente_id` a mais, e o tamanho ficou igual ao do índice antigo (22.118.400 bytes). A API só tem rotas `GET`, então não medi o custo em escrita.
+
+**Contra a hipótese do commit:** pelos dois critérios do commit, a hipótese não foi refutada: o p95 de `pedidos-por-status` caiu claramente da mediana anterior (2.026,7 ms), com faixas sem sobreposição, e o p95 geral melhorou, de 1.532,5 para 1.298,8 ms, também sem sobreposição. A previsão de que o p95 da rota cairia se confirmou. Não havia previsão sobre as outras rotas, e três delas ficaram mais lentas.
+
+**O que refutaria:** o p95 de `pedidos-por-status` não cair claramente da mediana anterior (2.026,7 ms na 09), ou o p95 geral não melhorar.

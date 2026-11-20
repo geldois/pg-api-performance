@@ -1,0 +1,189 @@
+$ docker compose exec -T banco psql -U loja -d loja < (as consultas abaixo, uma por bloco, com EXPLAIN (ANALYZE, BUFFERS); os blocos D e E criam o índice dentro de uma transação desfeita com ROLLBACK)  (2026-11-19, antes de aplicar a 10: banco com o estado do commit 572195a e o índice indice_pedidos de banco/04)
+
+Os tempos são de um banco ocioso, com uma consulta por vez, e não são resultado de medição. A página pedida é a 1000 de "pago" (OFFSET 19980), a última que a carga pede. O bloco D substitui o índice indice_pedidos por um índice com a mesma chave e INCLUDE (cliente_id), e o bloco E cria o índice novo sem apagar o antigo. Os dois blocos terminam em ROLLBACK, e o índice original continuou no banco depois (conferido com pg_get_indexdef). Foram omitidas só as linhas em branco entre os blocos e as linhas "Timing is on." e "Timing is off." do psql.
+
+== A: consulta de 4 colunas (id, cliente_id, status, criado_em), pagina 1000 de pago, 1a e 2a execucao
+                                                                 QUERY PLAN
+---------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=5829.70..5835.54 rows=20 width=22) (actual time=14.835..14.846 rows=20 loops=1)
+   Buffers: shared hit=20100 read=1
+   ->  Index Scan using indice_pedidos on pedidos  (cost=0.42..87390.90 rows=299533 width=22) (actual time=0.039..14.159 rows=20000 loops=1)
+         Index Cond: (status = 'pago'::text)
+         Buffers: shared hit=20100 read=1
+ Planning:
+   Buffers: shared hit=153 read=1
+ Planning Time: 0.506 ms
+ Execution Time: 14.869 ms
+(9 rows)
+
+                                                                 QUERY PLAN
+---------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=5829.70..5835.54 rows=20 width=22) (actual time=10.944..10.956 rows=20 loops=1)
+   Buffers: shared hit=20101
+   ->  Index Scan using indice_pedidos on pedidos  (cost=0.42..87390.90 rows=299533 width=22) (actual time=0.016..10.279 rows=20000 loops=1)
+         Index Cond: (status = 'pago'::text)
+         Buffers: shared hit=20101
+ Planning Time: 0.077 ms
+ Execution Time: 10.969 ms
+(7 rows)
+
+== B: so id, status, criado_em (sem cliente_id), pagina 1000 de pago, 1a e 2a
+                                                                   QUERY PLAN
+-------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=781.78..782.56 rows=20 width=18) (actual time=3.855..3.859 rows=20 loops=1)
+   Buffers: shared hit=102
+   ->  Index Only Scan using indice_pedidos on pedidos  (cost=0.42..11714.25 rows=299533 width=18) (actual time=0.047..3.114 rows=20000 loops=1)
+         Index Cond: (status = 'pago'::text)
+         Heap Fetches: 0
+         Buffers: shared hit=102
+ Planning Time: 0.069 ms
+ Execution Time: 3.870 ms
+(8 rows)
+
+                                                                   QUERY PLAN
+-------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=781.78..782.56 rows=20 width=18) (actual time=3.793..3.797 rows=20 loops=1)
+   Buffers: shared hit=102
+   ->  Index Only Scan using indice_pedidos on pedidos  (cost=0.42..11714.25 rows=299533 width=18) (actual time=0.015..3.051 rows=20000 loops=1)
+         Index Cond: (status = 'pago'::text)
+         Heap Fetches: 0
+         Buffers: shared hit=102
+ Planning Time: 0.045 ms
+ Execution Time: 3.807 ms
+(8 rows)
+
+== C: subconsulta de id no indice e depois as 20 linhas pela chave, pagina 1000 de pago, 1a e 2a
+                                                                         QUERY PLAN
+-------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort  (cost=951.99..952.04 rows=20 width=22) (actual time=9.450..9.452 rows=20 loops=1)
+   Sort Key: p.criado_em DESC, p.id DESC
+   Sort Method: quicksort  Memory: 25kB
+   Buffers: shared hit=165 read=23
+   ->  Nested Loop  (cost=782.20..951.56 rows=20 width=22) (actual time=4.021..9.411 rows=20 loops=1)
+         Buffers: shared hit=159 read=23
+         ->  Limit  (cost=781.78..782.56 rows=20 width=12) (actual time=3.751..3.760 rows=20 loops=1)
+               Buffers: shared hit=102
+               ->  Index Only Scan using indice_pedidos on pedidos  (cost=0.42..11714.25 rows=299533 width=12) (actual time=0.020..3.069 rows=20000 loops=1)
+                     Index Cond: (status = 'pago'::text)
+                     Heap Fetches: 0
+                     Buffers: shared hit=102
+         ->  Index Scan using pedidos_pkey on pedidos p  (cost=0.42..8.44 rows=1 width=22) (actual time=0.282..0.282 rows=1 loops=20)
+               Index Cond: (id = pedidos.id)
+               Buffers: shared hit=57 read=23
+ Planning:
+   Buffers: shared hit=65 read=4
+ Planning Time: 0.448 ms
+ Execution Time: 9.476 ms
+(19 rows)
+
+                                                                         QUERY PLAN
+-------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort  (cost=951.99..952.04 rows=20 width=22) (actual time=3.860..3.862 rows=20 loops=1)
+   Sort Key: p.criado_em DESC, p.id DESC
+   Sort Method: quicksort  Memory: 25kB
+   Buffers: shared hit=182
+   ->  Nested Loop  (cost=782.20..951.56 rows=20 width=22) (actual time=3.778..3.848 rows=20 loops=1)
+         Buffers: shared hit=182
+         ->  Limit  (cost=781.78..782.56 rows=20 width=12) (actual time=3.767..3.772 rows=20 loops=1)
+               Buffers: shared hit=102
+               ->  Index Only Scan using indice_pedidos on pedidos  (cost=0.42..11714.25 rows=299533 width=12) (actual time=0.022..3.078 rows=20000 loops=1)
+                     Index Cond: (status = 'pago'::text)
+                     Heap Fetches: 0
+                     Buffers: shared hit=102
+         ->  Index Scan using pedidos_pkey on pedidos p  (cost=0.42..8.44 rows=1 width=22) (actual time=0.003..0.003 rows=1 loops=20)
+               Index Cond: (id = pedidos.id)
+               Buffers: shared hit=80
+ Planning:
+   Buffers: shared hit=16
+ Planning Time: 0.200 ms
+ Execution Time: 3.878 ms
+(19 rows)
+
+== tamanho do indice atual
+ tamanho_atual | bytes_atual
+---------------+-------------
+ 21 MB         |    22118400
+(1 row)
+
+BEGIN
+DROP INDEX
+CREATE INDEX
+Time: 1032.762 ms (00:01.033)
+== D: tamanho do indice com INCLUDE (cliente_id) no lugar do atual
+ tamanho_com_include | bytes_com_include
+---------------------+-------------------
+ 21 MB               |          22118400
+(1 row)
+
+== D: consulta de 4 colunas com o indice INCLUDE no lugar do atual, pagina 1000 de pago, 1a e 2a
+                                                                   QUERY PLAN
+-------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=781.78..782.56 rows=20 width=22) (actual time=3.724..3.728 rows=20 loops=1)
+   Buffers: shared hit=1 read=101
+   ->  Index Only Scan using indice_pedidos on pedidos  (cost=0.42..11714.25 rows=299533 width=22) (actual time=0.052..3.179 rows=20000 loops=1)
+         Index Cond: (status = 'pago'::text)
+         Heap Fetches: 0
+         Buffers: shared hit=1 read=101
+ Planning:
+   Buffers: shared hit=98 read=1
+ Planning Time: 0.291 ms
+ Execution Time: 3.745 ms
+(10 rows)
+
+                                                                   QUERY PLAN
+-------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=781.78..782.56 rows=20 width=22) (actual time=3.303..3.307 rows=20 loops=1)
+   Buffers: shared hit=102
+   ->  Index Only Scan using indice_pedidos on pedidos  (cost=0.42..11714.25 rows=299533 width=22) (actual time=0.019..2.739 rows=20000 loops=1)
+         Index Cond: (status = 'pago'::text)
+         Heap Fetches: 0
+         Buffers: shared hit=102
+ Planning Time: 0.067 ms
+ Execution Time: 3.321 ms
+(8 rows)
+
+ROLLBACK
+== depois do rollback o indice original continua
+ tamanho_atual |                                          definicao
+---------------+---------------------------------------------------------------------------------------------
+ 21 MB         | CREATE INDEX indice_pedidos ON public.pedidos USING btree (status, criado_em DESC, id DESC)
+(1 row)
+
+== E: o indice novo criado sem apagar o antigo (a mesma chave com INCLUDE (cliente_id), com o nome indice_pedidos_incluindo_cliente_id), tamanhos de todos os indices de pedidos
+               indice                |  bytes
+-------------------------------------+----------
+ pedidos_pkey                        | 11255808
+ indice_pedidos                      | 22118400
+ indice_pedidos_cliente              | 20299776
+ indice_pedidos_criado_em            | 11255808
+ indice_pedidos_incluindo_cliente_id | 22118400
+(5 rows)
+
+== E: pagina 1000 de pago (4 colunas) com os dois indices, 1a e 2a
+                                                                              QUERY PLAN
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=781.78..782.56 rows=20 width=22) (actual time=4.232..4.236 rows=20 loops=1)
+   Buffers: shared hit=1 read=101
+   ->  Index Only Scan using indice_pedidos_incluindo_cliente_id on pedidos  (cost=0.42..11714.25 rows=299533 width=22) (actual time=0.055..3.583 rows=20000 loops=1)
+         Index Cond: (status = 'pago'::text)
+         Heap Fetches: 0
+         Buffers: shared hit=1 read=101
+ Planning:
+   Buffers: shared hit=56 read=1
+ Planning Time: 0.181 ms
+ Execution Time: 4.251 ms
+(10 rows)
+
+                                                                              QUERY PLAN
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=781.78..782.56 rows=20 width=22) (actual time=3.342..3.345 rows=20 loops=1)
+   Buffers: shared hit=102
+   ->  Index Only Scan using indice_pedidos_incluindo_cliente_id on pedidos  (cost=0.42..11714.25 rows=299533 width=22) (actual time=0.014..2.766 rows=20000 loops=1)
+         Index Cond: (status = 'pago'::text)
+         Heap Fetches: 0
+         Buffers: shared hit=102
+ Planning Time: 0.053 ms
+ Execution Time: 3.354 ms
+(8 rows)
+
+ROLLBACK

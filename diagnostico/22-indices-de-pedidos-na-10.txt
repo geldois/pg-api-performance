@@ -1,0 +1,17 @@
+$ docker compose exec -T banco psql -U loja -d loja -c "SELECT indexname, indexdef FROM pg_indexes WHERE tablename = 'pedidos' ORDER BY indexname" -c "SELECT indexrelid::regclass AS indice, pg_relation_size(indexrelid) AS bytes FROM pg_index WHERE indrelid = 'pedidos'::regclass ORDER BY 1"  (2026-11-19, depois das medições da 10, banco recriado com banco/09-indice-pedidos-incluindo-cliente-id.sql, commit 883beec)
+
+              indexname              |                                                               indexdef
+-------------------------------------+---------------------------------------------------------------------------------------------------------------------------------------
+ indice_pedidos_cliente              | CREATE INDEX indice_pedidos_cliente ON public.pedidos USING btree (cliente_id, criado_em DESC, id DESC)
+ indice_pedidos_criado_em            | CREATE INDEX indice_pedidos_criado_em ON public.pedidos USING btree (criado_em)
+ indice_pedidos_incluindo_cliente_id | CREATE INDEX indice_pedidos_incluindo_cliente_id ON public.pedidos USING btree (status, criado_em DESC, id DESC) INCLUDE (cliente_id)
+ pedidos_pkey                        | CREATE UNIQUE INDEX pedidos_pkey ON public.pedidos USING btree (id)
+(4 rows)
+
+               indice                |  bytes
+-------------------------------------+----------
+ pedidos_pkey                        | 11255808
+ indice_pedidos_cliente              | 20299776
+ indice_pedidos_criado_em            | 11255808
+ indice_pedidos_incluindo_cliente_id | 22118400
+(4 rows)
