@@ -1,0 +1,2 @@
+-- a busca por e-mail deixa de ler as 100 mil linhas de clientes: o filtro lower(email) = lower($1) só usa índice se o índice for sobre essa mesma expressão, então o banco passa a achar o cliente pela árvore (log N) em vez de varrer a tabela (N), e o p95 de cliente-por-email deve cair. O índice não é UNIQUE porque nada garante que o e-mail seja único, e o custo é um índice a mais em clientes
+CREATE INDEX indice_clientes_email ON clientes USING btree (lower(email) ASC, id ASC);
