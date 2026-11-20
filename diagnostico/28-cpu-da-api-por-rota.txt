@@ -1,0 +1,24 @@
+$ para cada rota, uma requisição por vez (curl, 1 usuário), com os parâmetros do gerador de carga: diferença do usage_usec do cpu.stat do cgroup da API antes e depois de N requisições, dividida por N (2026-11-20, commit 2fa8e72 em execução, banco e API sem carga, API ociosa 0 usec/s em 5 s, 20 requisições de aquecimento por rota fora da conta)
+
+rota                 requisições   CPU da API por requisição   tempo de relógio
+cliente              300           1,60 ms                     2,6 s
+cliente-por-email    300           1,54 ms                     2,8 s
+pedidos-do-cliente   300           1,64 ms                     3,2 s
+pedidos-por-status   200           1,58 ms                     2,4 s
+busca-produtos       200           2,14 ms                     6,3 s
+vendas-por-dia       100           108,46 ms                   21,8 s
+top-produtos         100           1,44 ms                     1,3 s
+
+Parâmetros: ids de cliente (id * 7919) mod 100000 + 1, status e página alternados, 8 termos de busca do gerador, janelas de 7 dias a partir de 2024-01-01 (início entre 0 e 717 dias), limite=10.
+
+Conta de composição, a partir das requisições por rota da execução 1 da 13 (resultados/20261120-103448-13-log-sem-corpo/resumo.txt) vezes o CPU por requisição acima:
+cliente              957 req   1,53 s    4,1%
+cliente-por-email    529 req   0,81 s    2,2%
+pedidos-do-cliente   745 req   1,22 s    3,3%
+pedidos-por-status   534 req   0,84 s    2,3%
+busca-produtos       547 req   1,17 s    3,1%
+vendas-por-dia       291 req   31,56 s   84,8%
+top-produtos          62 req   0,09 s    0,2%
+soma                           37,23 s
+
+Comparação: a API usou 38,1 s de CPU nessa execução (diagnostico/27-cpu-e-memoria-na-13.txt), 2,3% a mais que a soma (38,1 contra 37,23). A conta supõe que o custo por requisição sob carga é o medido uma por vez, o que não foi verificado.
