@@ -14,6 +14,7 @@ Uma linha por ideia aplicada na tabela, e os detalhes de cada uma na seção log
 | 08 | `top-produtos` lê a view materializada `vendas_por_produto` | [PostgreSQL 16, 41.3 Materialized Views](https://www.postgresql.org/docs/16/rules-materializedviews.html) | Aplicada e medida | 20,52 req/s, p95 2.718,4 ms | 41,45 req/s, p95 1.644,1 ms | Antes: as 5 pastas `resultados/20261119-*-07-indice-pedidos-criado-em` listadas na seção 07. Depois: `resultados/20261119-19*-08-top-produtos-view` (3) | `top-produtos` caiu de 32.719,5 para 415,3 ms e o req/s dobrou, mas `cliente` e `pedidos-do-cliente` ficaram mais lentas |
 | 09 | `/pedidos` lê o total da view materializada `contagem_pedidos_por_status` | [PostgreSQL 16, 41.3 Materialized Views](https://www.postgresql.org/docs/16/rules-materializedviews.html) | Aplicada e medida | 41,45 req/s, p95 1.644,1 ms | 46,39 req/s, p95 1.532,5 ms | Antes: `resultados/20261119-19*-08-top-produtos-view` (3). Depois: `resultados/20261119-20*-09-pedidos-total-view` (3) | O req/s subiu e a mediana de `pedidos-por-status` caiu de 870,8 para 276,3 ms, mas o p95 da rota e o geral ficaram na mesma faixa |
 | 10 | Índice `(status, criado_em DESC, id DESC) INCLUDE (cliente_id)` no lugar do `indice_pedidos`, e a página de `/pedidos` só com as 4 colunas da resposta | [PostgreSQL 16, 11.9 Index-Only Scans and Covering Indexes](https://www.postgresql.org/docs/16/indexes-index-only-scans.html) e [PostgreSQL 16, CREATE INDEX](https://www.postgresql.org/docs/16/sql-createindex.html) | Aplicada e medida | 46,39 req/s, p95 1.532,5 ms | 52,09 req/s, p95 1.298,8 ms | Antes: `resultados/20261119-20*-09-pedidos-total-view` (3). Depois: `resultados/20261119-22*-10-pedidos-indice-cobrindo` (3) | O p95 de `pedidos-por-status` caiu de 2.026,7 para 683,4 ms e o p95 geral também caiu, mas `cliente`, `pedidos-do-cliente` e `busca-produtos` ficaram mais lentas |
+| 11 | Índice `(lower(email), id)` em `clientes` | [PostgreSQL 16, 11.7](https://www.postgresql.org/docs/16/indexes-expressional.html) e [PostgreSQL 16, 11.3](https://www.postgresql.org/docs/16/indexes-multicolumn.html) | Aplicada e medida | 52,09 req/s, p95 1.298,8 ms | 60,43 req/s, p95 972,5 ms | Antes: `resultados/20261119-22*-10-pedidos-indice-cobrindo` (3). Depois: `resultados/20261119-22*-11-clientes-indice-email` (3) | O p95 de `cliente-por-email` caiu de 1.616,0 para 709,6 ms e o p95 geral também caiu, mas `pedidos-por-status`, `cliente` e `pedidos-do-cliente` ficaram mais lentas |
 
 ## 01 Índice em `itens_pedido(pedido_id)`
 
@@ -448,3 +449,51 @@ Uma linha por ideia aplicada na tabela, e os detalhes de cada uma na seção log
 **Contra a hipótese do commit:** pelos dois critérios do commit, a hipótese não foi refutada: o p95 de `pedidos-por-status` caiu claramente da mediana anterior (2.026,7 ms), com faixas sem sobreposição, e o p95 geral melhorou, de 1.532,5 para 1.298,8 ms, também sem sobreposição. A previsão de que o p95 da rota cairia se confirmou. Não havia previsão sobre as outras rotas, e três delas ficaram mais lentas.
 
 **O que refutaria:** o p95 de `pedidos-por-status` não cair claramente da mediana anterior (2.026,7 ms na 09), ou o p95 geral não melhorar.
+
+## 11 Índice `(lower(email), id)` em `clientes`
+
+**Rótulo:** `11-clientes-indice-email`
+
+**Ideia e fonte:** criar o índice `(lower(email), id)` em `clientes`, em `banco/10-indice-clientes-email.sql`, para a busca de `/clientes?email=`, que filtra por `lower(email) = lower($1)` e ordena por `id`. A rota não mudou. O índice não é `UNIQUE`, porque nada garante que o e-mail seja único, e o `id` como segunda coluna deixa o `ORDER BY id` no mesmo índice. Fontes: [PostgreSQL 16, 11.7 Indexes on Expressions](https://www.postgresql.org/docs/16/indexes-expressional.html), cujo exemplo é um índice em `lower(col1)` para consultas que usam essa mesma expressão, e [PostgreSQL 16, 11.3 Multicolumn Indexes](https://www.postgresql.org/docs/16/indexes-multicolumn.html), que diz que "equality constraints on leading columns" limitam "the portion of the index that is scanned". Acesso em 2026-11-18, com as duas páginas reconferidas em 2026-11-19. Nenhuma das duas mede desempenho.
+
+**Status:** Aplicada e medida.
+
+**Hipótese** (commit `c5fbeda`): a busca por e-mail deixa de ler as 100 mil linhas de `clientes`. O filtro `lower(email) = lower($1)` só usa índice se o índice for sobre essa mesma expressão, então o banco passa a achar o cliente pela árvore (log N) em vez de varrer a tabela (N), e o p95 de `cliente-por-email` deve cair. O índice não é `UNIQUE` porque nada garante que o e-mail seja único, e o `id` como segunda coluna deixa o `ORDER BY id` da rota no mesmo índice. O custo é um índice a mais em `clientes`. O que refutaria: o p95 de `cliente-por-email` não cair claramente da mediana anterior (1.616,0 ms na 10), ou o p95 geral não melhorar.
+
+**Antes usado:** mudança 10.
+- `resultados/20261119-221323-10-pedidos-indice-cobrindo`
+- `resultados/20261119-221442-10-pedidos-indice-cobrindo`
+- `resultados/20261119-221602-10-pedidos-indice-cobrindo`
+
+**Depois:**
+- `resultados/20261119-223843-11-clientes-indice-email`
+- `resultados/20261119-224002-11-clientes-indice-email`
+- `resultados/20261119-224120-11-clientes-indice-email`
+
+**Commit medido:** os `contexto.txt` das três execuções citam `c5fbeda`, com `arquivos alterados sem commit: 0`. O banco foi recriado (`docker compose down -v` e `up -d --build`) para aplicar o `.sql`, e o contrato terminou em "Contrato mantido" (42 respostas) ao fim de cada uma das três medições. Os índices de `clientes` depois da mudança e os tamanhos estão em `diagnostico/24-memoria-e-indices-de-clientes-na-11.txt`: `indice_clientes_email` tem 4.997.120 bytes, contra 2.260.992 da chave primária.
+
+**Planos:** `diagnostico/23-clientes-por-email-e-indice.txt`, tirados antes da mudança, com o banco ocioso, para a busca de `Cliente3@Exemplo.com`, que está gravado com maiúsculas. Sem índice novo, o plano é `Seq Scan` em `clientes`, com 99.999 linhas descartadas, e a consulta levou 41,105 e 43,552 ms (1ª e 2ª execução). Com o índice `(lower(email), id)` o plano é `Bitmap Index Scan` e levou 0,081 e 0,026 ms. O primeiro rascunho do arquivo tinha a chave `(id, lower(email))`, com o `id` na frente, e esse índice não é usado: o plano continuou em `Seq Scan`, com 41,146 e 44,612 ms. O rascunho foi corrigido antes do commit. Os dados têm 33.333 e-mails com alguma maiúscula entre 100.000 (`diagnostico/25-emails-de-clientes-com-maiuscula.txt`), então a ideia de trocar o filtro por `email = $1` e fazer o `lower` na API, com um índice comum em `email`, foi descartada: ela deixaria de achar esses clientes.
+
+**Execuções usadas e não usadas:** três tentativas, três pastas, todas usadas. As três tiveram 0,00% de erros, contrato mantido, swap do banco e da API em 0 ao fim de cada execução e nenhum evento em `memory.events` (`diagnostico/24-memoria-e-indices-de-clientes-na-11.txt`; o `memory.peak` não foi lido, então o que se sabe é o swap ao fim de cada execução, e não durante a carga).
+
+**Resultado** (medianas, antes → depois, com a faixa das execuções da 11 entre parênteses):
+- Requisições por segundo: 52,09 → 60,43 (58,15 a 60,55)
+- p95 geral: 1.298,8 → 972,5 ms (911,6 a 990,5)
+- Mediana geral: 223,0 → 250,3 ms (238,1 a 265,8)
+- p95 de `cliente-por-email`: 1.616,0 → 709,6 ms (709,1 a 726,0)
+- Mediana de `cliente-por-email`: 876,1 → 169,5 ms (144,9 a 198,6)
+- Requisições de `cliente-por-email` por execução: 457 → 526 (504 a 526)
+- p95 de `vendas-por-dia`: 1.693,7 → 1.395,0 ms (1.289,1 a 1.417,4)
+- p95 de `pedidos-por-status`: 683,4 → 873,4 ms (839,5 a 1.093,6)
+- p95 de `cliente`: 585,8 → 692,7 ms (656,1 a 709,6)
+- p95 de `pedidos-do-cliente`: 533,5 → 696,8 ms (676,1 a 780,1)
+- p95 de `busca-produtos`: 873,1 → 982,3 ms (975,1 a 1.016,1)
+- p95 de `top-produtos`: 597,5 → 580,9 ms (578,6 a 592,5)
+- Memória média do banco: 215,1 → 213,1 MiB (212,5 a 218,1). Da API: 48,2 → 44,3 MiB (43,6 a 44,6)
+- CPU: o CPU do `podman stats` não é confiável neste ambiente, então não é citado
+
+**Conclusão:** valeu. O p95 de `cliente-por-email` caiu de 1.616,0 para 709,6 ms, com faixas sem sobreposição (1.577,6 a 1.619,4 contra 709,1 a 726,0), e a mediana da rota caiu de 876,1 para 169,5 ms. O p95 geral também caiu, de 1.298,8 para 972,5 ms (1.188,7 a 1.313,4 contra 911,6 a 990,5), e o req/s subiu de 52,09 para 60,43 (52,01 a 52,86 contra 58,15 a 60,55), os dois sem sobreposição. O p95 de `cliente-por-email` ainda é 709,6 ms, embora a consulta isolada leve 0,026 a 0,081 ms com índice. Explicação provável, ainda sem prova: sob a carga, a rota espera pela fila de conexões e pela disputa por CPU, e não pela consulta, e não medi essa espera. `vendas-por-dia` também caiu sem sobreposição (1.618,7 a 1.723,8 contra 1.289,1 a 1.417,4), sem que a mudança a tocasse, então o ganho do p95 geral não pode ser atribuído por inteiro ao índice. A mediana geral subiu de 223,0 para 250,3 ms, mas na mesma faixa, porque as faixas se sobrepõem (189,1 a 241,8 contra 238,1 a 265,8). Três rotas ficaram mais lentas, com faixas sem sobreposição: `pedidos-por-status` (640,1 a 761,5 contra 839,5 a 1.093,6), `cliente` (481,8 a 599,0 contra 656,1 a 709,6) e `pedidos-do-cliente` (499,7 a 599,1 contra 676,1 a 780,1). Explicação provável, ainda sem prova: com mais requisições por segundo, as rotas leves esperam mais pelos recursos limitados do banco (1 CPU) e da API (0,5 CPU), o mesmo padrão (rotas leves pioram quando o req/s sobe) já visto nas mudanças anteriores. Não há medição de CPU confiável neste ambiente para confirmar isso, e não sei se o limite que pesa é o do banco ou o da API. `busca-produtos` e `top-produtos` ficaram na mesma faixa, e `top-produtos` tem 59 a 63 requisições por execução, então o p95 dela vem de poucas amostras. A memória média do banco ficou na mesma faixa, e a da API caiu de 48,2 para 44,3 MiB, sem causa conhecida. Custo: um índice de 4.997.120 bytes a mais em `clientes`. A API só tem rotas `GET`, então não medi o custo em escrita.
+
+**Contra a hipótese do commit:** pelos dois critérios do commit, a hipótese não foi refutada: o p95 de `cliente-por-email` caiu claramente da mediana anterior (1.616,0 ms), com faixas sem sobreposição, e o p95 geral melhorou, de 1.298,8 para 972,5 ms, também sem sobreposição. A previsão de que o p95 da rota cairia se confirmou. Não havia previsão sobre as outras rotas, e três delas ficaram mais lentas.
+
+**O que refutaria:** o p95 de `cliente-por-email` não cair claramente da mediana anterior (1.616,0 ms na 10), ou o p95 geral não melhorar.

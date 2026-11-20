@@ -1,0 +1,15 @@
+$ docker compose exec -T banco psql -U loja -d loja -c "SELECT count(*) FILTER (WHERE email <> lower(email)) AS com_maiuscula, count(*) AS total, count(DISTINCT lower(email)) AS distintos_lower, count(DISTINCT email) AS distintos FROM clientes" -c "SELECT id, email FROM clientes ORDER BY id LIMIT 3"  (2026-11-19, depois das medições da 11, banco recriado com os dados originais)
+
+ com_maiuscula | total  | distintos_lower | distintos
+---------------+--------+-----------------+-----------
+         33333 | 100000 |          100000 |    100000
+(1 row)
+
+ id |        email
+----+----------------------
+  1 | cliente1@exemplo.com
+  2 | cliente2@exemplo.com
+  3 | Cliente3@Exemplo.com
+(3 rows)
+
+A consulta foi rodada hoje, depois das medições, no banco recriado por banco/02-dados.sql.

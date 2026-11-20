@@ -1,0 +1,102 @@
+$ docker compose exec -T banco psql -U loja -d loja < (as consultas abaixo, com EXPLAIN (ANALYZE, BUFFERS); os blocos A e B criam o índice dentro de uma transação desfeita com ROLLBACK)  (2026-11-19, antes de aplicar a 11: banco com o estado do commit 883beec, sem índice em clientes além da chave primária)
+
+Os tempos são de um banco ocioso, com uma consulta por vez, e não são resultado de medição. A consulta é a da rota /clientes?email=, com o e-mail "Cliente3@Exemplo.com", que está gravado com maiúsculas: SELECT * FROM clientes WHERE lower(email) = lower('Cliente3@Exemplo.com') ORDER BY id. O bloco A mostra o primeiro rascunho do arquivo banco/10, com a chave (id, lower(email)), que foi corrigido antes do commit. O bloco B é o índice que foi commitado, com a chave (lower(email), id), criado com o nome x só para o teste. Foram omitidas só as linhas "BEGIN", "CREATE INDEX" e "ROLLBACK" do psql.
+
+== A: primeiro rascunho do indice, chave (id, lower(email)), 1a e 2a execucao
+                                                  QUERY PLAN
+---------------------------------------------------------------------------------------------------------------
+ Sort  (cost=2678.41..2679.66 rows=500 width=60) (actual time=41.122..41.123 rows=1 loops=1)
+   Sort Key: id
+   Sort Method: quicksort  Memory: 25kB
+   Buffers: shared hit=1156
+   ->  Seq Scan on clientes  (cost=0.00..2656.00 rows=500 width=60) (actual time=0.009..41.118 rows=1 loops=1)
+         Filter: (lower(email) = 'cliente3@exemplo.com'::text)
+         Rows Removed by Filter: 99999
+         Buffers: shared hit=1156
+ Planning:
+   Buffers: shared hit=59 read=1
+ Planning Time: 0.296 ms
+ Execution Time: 41.146 ms
+(12 rows)
+
+                                                  QUERY PLAN
+---------------------------------------------------------------------------------------------------------------
+ Sort  (cost=2678.41..2679.66 rows=500 width=60) (actual time=44.592..44.594 rows=1 loops=1)
+   Sort Key: id
+   Sort Method: quicksort  Memory: 25kB
+   Buffers: shared hit=1156
+   ->  Seq Scan on clientes  (cost=0.00..2656.00 rows=500 width=60) (actual time=0.014..44.581 rows=1 loops=1)
+         Filter: (lower(email) = 'cliente3@exemplo.com'::text)
+         Rows Removed by Filter: 99999
+         Buffers: shared hit=1156
+ Planning Time: 0.111 ms
+ Execution Time: 44.612 ms
+(10 rows)
+
+== B: indice commitado, chave (lower(email), id), 1a e 2a execucao
+                                                      QUERY PLAN
+----------------------------------------------------------------------------------------------------------------------
+ Sort  (cost=960.32..961.57 rows=500 width=60) (actual time=0.049..0.049 rows=1 loops=1)
+   Sort Key: id
+   Sort Method: quicksort  Memory: 25kB
+   Buffers: shared hit=1 read=3
+   ->  Bitmap Heap Scan on clientes  (cost=20.29..937.91 rows=500 width=60) (actual time=0.044..0.044 rows=1 loops=1)
+         Recheck Cond: (lower(email) = 'cliente3@exemplo.com'::text)
+         Heap Blocks: exact=1
+         Buffers: shared hit=1 read=3
+         ->  Bitmap Index Scan on x  (cost=0.00..20.17 rows=500 width=0) (actual time=0.041..0.041 rows=1 loops=1)
+               Index Cond: (lower(email) = 'cliente3@exemplo.com'::text)
+               Buffers: shared read=3
+ Planning:
+   Buffers: shared hit=9 read=1
+ Planning Time: 0.151 ms
+ Execution Time: 0.081 ms
+(15 rows)
+
+                                                      QUERY PLAN
+----------------------------------------------------------------------------------------------------------------------
+ Sort  (cost=960.32..961.57 rows=500 width=60) (actual time=0.015..0.015 rows=1 loops=1)
+   Sort Key: id
+   Sort Method: quicksort  Memory: 25kB
+   Buffers: shared hit=4
+   ->  Bitmap Heap Scan on clientes  (cost=20.29..937.91 rows=500 width=60) (actual time=0.012..0.013 rows=1 loops=1)
+         Recheck Cond: (lower(email) = 'cliente3@exemplo.com'::text)
+         Heap Blocks: exact=1
+         Buffers: shared hit=4
+         ->  Bitmap Index Scan on x  (cost=0.00..20.17 rows=500 width=0) (actual time=0.011..0.011 rows=1 loops=1)
+               Index Cond: (lower(email) = 'cliente3@exemplo.com'::text)
+               Buffers: shared hit=3
+ Planning Time: 0.045 ms
+ Execution Time: 0.026 ms
+(13 rows)
+
+== sem indice novo, 1a e 2a execucao
+                                                  QUERY PLAN
+---------------------------------------------------------------------------------------------------------------
+ Sort  (cost=2678.41..2679.66 rows=500 width=60) (actual time=41.092..41.092 rows=1 loops=1)
+   Sort Key: id
+   Sort Method: quicksort  Memory: 25kB
+   Buffers: shared hit=1156
+   ->  Seq Scan on clientes  (cost=0.00..2656.00 rows=500 width=60) (actual time=0.010..41.087 rows=1 loops=1)
+         Filter: (lower(email) = 'cliente3@exemplo.com'::text)
+         Rows Removed by Filter: 99999
+         Buffers: shared hit=1156
+ Planning:
+   Buffers: shared hit=6
+ Planning Time: 0.123 ms
+ Execution Time: 41.105 ms
+(12 rows)
+
+                                                  QUERY PLAN
+---------------------------------------------------------------------------------------------------------------
+ Sort  (cost=2678.41..2679.66 rows=500 width=60) (actual time=43.534..43.535 rows=1 loops=1)
+   Sort Key: id
+   Sort Method: quicksort  Memory: 25kB
+   Buffers: shared hit=1156
+   ->  Seq Scan on clientes  (cost=0.00..2656.00 rows=500 width=60) (actual time=0.013..43.528 rows=1 loops=1)
+         Filter: (lower(email) = 'cliente3@exemplo.com'::text)
+         Rows Removed by Filter: 99999
+         Buffers: shared hit=1156
+ Planning Time: 0.092 ms
+ Execution Time: 43.552 ms
+(10 rows)
