@@ -1,0 +1,12 @@
+$ para cada rota, uma requisição por vez (curl, 1 usuário), com os parâmetros do gerador de carga: diferença do usage_usec do cpu.stat do cgroup da API antes e depois de N requisições, dividida por N (2026-11-20, mesmo método de diagnostico/28-cpu-da-api-por-rota.txt, commit 9731f6a em execução, banco e API sem carga, API ociosa 20 usec/s em 5 s, 20 requisições de aquecimento por rota fora da conta)
+
+rota                 requisições   CPU da API por requisição   tempo de relógio
+cliente              300           1,06 ms                     3,0 s
+cliente-por-email    300           1,08 ms                     2,9 s
+pedidos-do-cliente   300           1,41 ms                     3,6 s
+pedidos-por-status   200           2,64 ms                     2,3 s
+busca-produtos       200           2,24 ms                     6,2 s
+vendas-por-dia       100           1,98 ms                     8,5 s
+top-produtos         100           2,07 ms                     1,4 s
+
+Comparação com diagnostico/28 (antes da 14): vendas-por-dia foi de 108,46 ms para 1,98 ms de CPU da API por requisição. As outras rotas ficaram entre 1,06 e 2,64 ms, contra 1,44 a 2,14 ms antes. Cada medição é de uma execução só, sem repetição, então diferenças pequenas entre as outras rotas não são distinguíveis de variação.

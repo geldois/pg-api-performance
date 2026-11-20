@@ -1,0 +1,24 @@
+$ leitura de cpu.stat, memory.swap.current, memory.swap.max e memory.events do cgroup do container do banco e do da API, antes e depois de cada execução de scripts/medir.sh 14-vendas-por-dia-sql (2026-11-20, sem recriar o banco, API reconstruída com docker compose up -d --build, commit medido 9731f6a)
+
+Limites lidos antes das execuções (nível do container, o efetivo):
+- banco: cpu.max 100000 100000, memory.max 536870912 (512 MiB), memory.swap.max 536870912 (padrão do container)
+- api: cpu.max 50000 100000, memory.max 268435456 (256 MiB), memory.swap.max 268435456 (padrão do container)
+
+Memória, nas 6 leituras (antes e depois de cada execução): memory.swap.current 0 nos dois containers, e memory.events dos dois com "low 0 high 0 max 0 oom 0 oom_kill 0 oom_group_kill 0".
+
+CPU, diferença entre a leitura de antes e a de depois de cada execução (cpu.stat do cgroup, e o intervalo entre as leituras é de cerca de 77 s e inclui o aquecimento, a carga e a conferência do contrato do medir.sh, então o CPU médio por intervalo é aproximado, e a fração de períodos estrangulados é a medida direta do teto):
+
+exec  pasta                                     api: CPU usada, períodos estrangulados      banco: CPU usada, períodos estrangulados
+1     20261120-115815-14-vendas-por-dia-sql     7,8 s (7,79), 0 de 770 (0%)                 75,9 s, 754 de 767 (98,3%)
+2     20261120-115933-14-vendas-por-dia-sql     6,8 s (6,85), 0 de 768 (0%)                 75,7 s, 755 de 764 (98,8%)
+3     20261120-120051-14-vendas-por-dia-sql     6,7 s (6,72), 0 de 766 (0%)                 75,9 s, 756 de 769 (98,3%)
+
+Leituras brutas de cpu.stat (usage_usec, nr_periods, nr_throttled):
+- antes da exec 1:  api 104079246 2429 1800 | banco 485468253 11449 2544
+- depois da exec 1: api 111873644 3199 1800 | banco 561374556 12216 3298
+- antes da exec 2:  api 111873644 3199 1800 | banco 561374587 12216 3298
+- depois da exec 2: api 118722834 3967 1800 | banco 637088612 12980 4053
+- antes da exec 3:  api 118722834 3968 1800 | banco 637088612 12981 4053
+- depois da exec 3: api 125447552 4734 1800 | banco 713015048 13750 4809
+
+Comparação com a 13: diagnostico/27-cpu-e-memoria-na-13.txt (API 37,6 a 38,1 s e 95% a 96% estrangulada, banco 40,3 a 40,5 s e 23% a 27%).

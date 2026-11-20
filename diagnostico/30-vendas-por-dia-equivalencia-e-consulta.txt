@@ -1,0 +1,14 @@
+$ para 545 janelas de 1 a 31 dias (inicio de -5 a 740 dias depois de 2024-01-01, de 7 em 7, mais 10 janelas de borda: de 1 dia nos dias 0, 723, 724 e 300 depois de 2024-01-01, de 31 dias nas pontas, janelas inteiras fora do intervalo e janelas que cruzam as pontas), compara o JSON da rota antiga (consulta e soma em JavaScript do commit anterior, rodadas pelo mesmo pool, dentro do container da API) com o da rota nova (GET /relatorios/vendas-por-dia da API em execução, commit 9731f6a), igualdade da string JSON inteira e do status 200 (2026-11-20, script fora do repositório; roda com docker compose exec -T api node -)
+
+resultado:
+{"janelas":545,"iguais":545,"diferentes":0,"janelas_vazias":8,"dias_comparados":5904,"exemplos":[]}
+
+Observação: o contrato de 42 respostas também terminou em "Contrato mantido" com este commit, e cobre só 42 janelas, por isso a comparação acima.
+
+$ docker compose exec -T api node -e "const {consultar}=require('/app/src/db'); consultar('SELECT count(*) AS n, sum(quantidade) AS s, sum(quantidade * preco_unitario_centavos) AS r FROM itens_pedido WHERE pedido_id < 100').then(r=>console.log(JSON.stringify(r)))" (2026-11-20): como o pg devolve count e sum
+[{"n":"299","s":"598","r":"147994360"}]
+(os três valores voltam como texto, e foi isso que quebrou o contrato antes do Number() na rota: "esperado 616, obtido "616"")
+
+$ EXPLAIN (ANALYZE) da consulta nova para a janela 2024-06-01 a 2024-06-07, banco ocioso, duas execuções seguidas, só a linha "Execution Time" extraída (2026-11-20)
+Execution Time: 104.655 ms
+Execution Time: 23.063 ms

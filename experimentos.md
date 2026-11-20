@@ -17,6 +17,7 @@ Uma linha por ideia aplicada na tabela, e os detalhes de cada uma na seção log
 | 11 | Índice `(lower(email), id)` em `clientes` | [PostgreSQL 16, 11.7](https://www.postgresql.org/docs/16/indexes-expressional.html) e [PostgreSQL 16, 11.3](https://www.postgresql.org/docs/16/indexes-multicolumn.html) | Aplicada e medida | 52,09 req/s, p95 1.298,8 ms | 60,43 req/s, p95 972,5 ms | Antes: `resultados/20261119-22*-10-pedidos-indice-cobrindo` (3). Depois: `resultados/20261119-22*-11-clientes-indice-email` (3) | O p95 de `cliente-por-email` caiu de 1.616,0 para 709,6 ms e o p95 geral também caiu, mas `pedidos-por-status`, `cliente` e `pedidos-do-cliente` ficaram mais lentas |
 | 12 | Pool com `max` 10 de novo | [node-postgres, Pool](https://node-postgres.com/apis/pool) e [node-postgres, Pool sizing](https://node-postgres.com/guides/pool-sizing) | Aplicada e medida | 60,43 req/s, p95 972,5 ms | 61,03 req/s, p95 786,3 ms | Antes: `resultados/20261119-22*-11-clientes-indice-email` (3). Depois: `resultados/20261120-10*-12-pool-max-10` (3) | O p95 geral caiu, mas a rota que mais variou foi `busca-produtos`, e não `cliente`. A API ficou no teto de CPU |
 | 13 | Log da API sem o corpo da resposta | [Express, Production best practices: performance and reliability](https://expressjs.com/en/advanced/best-practice-performance.html) | Aplicada, sem ganho | 61,03 req/s, p95 786,3 ms | 60,64 req/s, p95 793,3 ms | Antes: `resultados/20261120-102*-12-pool-max-10` (3). Depois: `resultados/20261120-103*-13-log-sem-corpo` (3) | O p95 geral e o req/s ficaram na mesma faixa, e a API continuou no teto de CPU |
+| 14 | `vendas-por-dia` agrupa por dia no banco | [PostgreSQL 16, 7.2.3 The GROUP BY and HAVING Clauses](https://www.postgresql.org/docs/16/queries-table-expressions.html) e [PostgreSQL 16, 4.2.7 Aggregate Expressions](https://www.postgresql.org/docs/16/sql-expressions.html) | Aplicada e medida | 60,64 req/s, p95 793,3 ms | 115,08 req/s, p95 524,7 ms | Antes: `resultados/20261120-103*-13-log-sem-corpo` (3). Depois: `resultados/20261120-*-14-vendas-por-dia-sql` (3) | O req/s quase dobrou e a API saiu do teto de CPU, mas o p95 de `vendas-por-dia` não mudou e o gargalo voltou ao banco |
 
 ## 01 Índice em `itens_pedido(pedido_id)`
 
@@ -585,3 +586,49 @@ Uma linha por ideia aplicada na tabela, e os detalhes de cada uma na seção log
 **Contra a hipótese do commit:** pelo critério do commit, a hipótese foi refutada, porque o p95 geral não caiu (de 786,3 para 793,3 ms, na mesma faixa). A previsão de rota também não se confirmou: `pedidos-do-cliente` foi de 658,3 para 683,3 ms e `pedidos-por-status` de 873,2 para 871,0 ms, e `busca-produtos`, a que mais caiu das três (de 761,4 para 711,1 ms), tem faixas que se sobrepõem. A segunda condição do "o que refutaria", `cliente` variar mais que `pedidos-do-cliente`, não aconteceu (`cliente` subiu 1,3% e `pedidos-do-cliente` 3,8%).
 
 **O que refutaria:** o p95 geral não cair, ou `cliente` variar mais que `pedidos-do-cliente`.
+
+## 14 `vendas-por-dia` agrupa por dia no banco
+
+**Rótulo:** `14-vendas-por-dia-sql`
+
+**Ideia e fonte:** trocar, em `/relatorios/vendas-por-dia`, a consulta que traz uma linha por item vendido e a soma em JavaScript por uma consulta que agrupa por dia no PostgreSQL (`GROUP BY`, `count(DISTINCT p.id)` e `sum`), sem a coluna `observacoes`, que a resposta não usa. A ideia vem do diagnóstico de CPU por rota (`diagnostico/28-cpu-da-api-por-rota.txt`), em que essa rota gastava 108,46 ms de CPU da API por requisição, contra 1,44 a 2,14 ms nas outras. Fontes: [PostgreSQL 16, 7.2.3 The GROUP BY and HAVING Clauses](https://www.postgresql.org/docs/16/queries-table-expressions.html), que diz que "The GROUP BY clause is used to group together those rows in a table that have the same values in all the columns listed" e que "columns that are not listed in GROUP BY cannot be referenced except in aggregate expressions", e [PostgreSQL 16, 4.2.7 Aggregate Expressions](https://www.postgresql.org/docs/16/sql-expressions.html), que diz que a forma com `DISTINCT` "invokes the aggregate once for each distinct value of the expression" e que "count(distinct f1) yields the number of distinct non-null values of f1". Nenhuma das duas mede desempenho. Acesso em 2026-11-20.
+
+**Status:** Aplicada e medida.
+
+**Hipótese** (commit `9731f6a`): mover o agrupamento de vendas-por-dia para o GROUP BY do PostgreSQL, sem trazer observacoes, deve reduzir o CPU da API por requisição dessa rota e o p95 geral, porque hoje a rota traz milhares de linhas do banco e soma tudo em JavaScript (108,46 ms de CPU da API por requisição, 84,8% do CPU da API segundo diagnostico/28). Previsão: o p95 de vendas-por-dia cai muito, a API sai do teto de 0,5 CPU, e as outras rotas melhoram por efeito indireto. O que refutaria: o CPU da API por requisição de vendas-por-dia não cair claramente, ou o p95 geral não cair.
+
+**Antes usado:** mudança 13.
+- `resultados/20261120-103448-13-log-sem-corpo`
+- `resultados/20261120-103607-13-log-sem-corpo`
+- `resultados/20261120-103726-13-log-sem-corpo`
+
+**Depois:**
+- `resultados/20261120-115815-14-vendas-por-dia-sql`
+- `resultados/20261120-115933-14-vendas-por-dia-sql`
+- `resultados/20261120-120051-14-vendas-por-dia-sql`
+
+**Commit medido:** os `contexto.txt` das três execuções citam `9731f6a`, com `arquivos alterados sem commit: 0`, e o contrato terminou em "Contrato mantido" (42 respostas) ao fim de cada uma. A API foi reconstruída com `docker compose up -d --build` e o banco não foi recriado (não há `.sql` novo).
+
+**Equivalência:** o contrato cobre só 42 respostas, então a rota antiga (consulta e soma em JavaScript do commit anterior) foi comparada com a nova em 545 janelas de 1 a 31 dias, com janelas nas pontas dos dados e janelas fora do intervalo. O JSON inteiro foi igual nas 545 (8 delas vazias, 5.904 dias comparados), em `diagnostico/30-vendas-por-dia-equivalencia-e-consulta.txt`. O `pg` devolve `count` e `sum` como texto, e a rota converte com `Number()` para manter números na resposta (mesmo arquivo). O dia sai dos 10 primeiros caracteres do texto de `criado_em`, que assume o formato ISO padrão do PostgreSQL, e não testei outro formato.
+
+**Execuções usadas e não usadas:** três tentativas, três pastas, todas usadas. As três tiveram 0,00% de erros, swap do banco e da API em 0 e nenhum evento em `memory.events` antes e depois de cada uma (`diagnostico/29-cpu-e-memoria-na-14.txt`).
+
+**Resultado** (medianas, antes → depois, com a faixa das execuções da 14 entre parênteses):
+- Requisições por segundo: 60,64 → 115,08 (113,96 a 115,56)
+- p95 geral: 793,3 → 524,7 ms (515,1 a 529,9)
+- p95 de `vendas-por-dia`: 1.145,7 → 1.161,2 ms (1.098,3 a 1.164,8)
+- p95 de `cliente`: 618,6 → 192,4 ms (191,9 a 196,2)
+- p95 de `cliente-por-email`: 639,0 → 195,2 ms (195,1 a 195,5)
+- p95 de `pedidos-do-cliente`: 683,3 → 198,2 ms (196,8 a 200,2)
+- p95 de `pedidos-por-status`: 871,0 → 312,1 ms (309,5 a 319,9)
+- p95 de `busca-produtos`: 711,1 → 421,1 ms (415,6 a 427,6)
+- p95 de `top-produtos`: 594,0 → 244,5 ms (210,3 a 256,8)
+- Memória média do banco: 183,7 → 201,9 MiB (201,5 a 202,4). Da API: 40,3 → 27,9 MiB (27,6 a 27,9)
+- CPU do cgroup (`diagnostico/29-cpu-e-memoria-na-14.txt`): API usando 6,7 a 7,8 s por execução e com 0 períodos estrangulados, e banco usando 75,7 a 75,9 s e estrangulado em 98,3% a 98,8% dos períodos. Na 13 (`diagnostico/27-cpu-e-memoria-na-13.txt`) foram 37,6 a 38,1 s e 95% a 96% na API, e 40,3 a 40,5 s e 23% a 27% no banco. O CPU do `podman stats` continua sem ser citado
+- CPU da API por requisição de `vendas-por-dia`, uma requisição por vez: 108,46 → 1,98 ms (`diagnostico/28-cpu-da-api-por-rota.txt` e `diagnostico/31-cpu-da-api-por-rota-depois-da-14.txt`, uma medição de cada, sem repetição)
+
+**Conclusão:** valeu muito. O req/s foi de 60,64 para 115,08 (60,51 a 61,99 contra 113,96 a 115,56) e o p95 geral de 793,3 para 524,7 ms (767,9 a 822,2 contra 515,1 a 529,9), os dois sem sobreposição. O p95 de `cliente`, `cliente-por-email`, `pedidos-do-cliente`, `pedidos-por-status`, `busca-produtos` e `top-produtos` também caiu, todos sem sobreposição de faixas. A API saiu do teto de CPU: de 37,6 a 38,1 s e 95% a 96% dos períodos estrangulados na 13 para 6,7 a 7,8 s e nenhum período estrangulado. O p95 de `vendas-por-dia` ficou na mesma faixa (1.145,7 contra 1.161,2 ms, com faixas de 1.074,4 a 1.197,5 e de 1.098,3 a 1.164,8 que se sobrepõem). Explicação provável, ainda sem prova: agora é o banco que soma as linhas da rota, e ele está no teto de 1 CPU, usando 75,7 a 75,9 s por execução e estrangulado em 98,3% a 98,8% dos períodos, e a consulta isolada levou 104,655 ms na 1ª execução e 23,063 ms na 2ª (`diagnostico/30-vendas-por-dia-equivalencia-e-consulta.txt`). O gargalo de CPU voltou da API para o banco, como estava na linha de base (`diagnostico/00-cpu-por-cgroup-linha-de-base.txt`). O custo é a memória média do banco, que subiu de 183,7 para 201,9 MiB, sem sobreposição das faixas, dentro do limite de 512 MiB e sem eventos de falta de memória. A memória média da API caiu de 40,3 para 27,9 MiB. Explicação provável, com base nas leituras de CPU: o ganho geral vem de a API ter deixado de gastar CPU somando linhas em JavaScript, e não de a rota ter ficado mais rápida.
+
+**Contra a hipótese do commit:** pelo critério do commit, a hipótese não foi refutada: o CPU da API por requisição de `vendas-por-dia` caiu de 108,46 para 1,98 ms e o p95 geral caiu de 793,3 para 524,7 ms. A previsão de que a API sairia do teto de 0,5 CPU se confirmou, e a de que as outras rotas melhorariam por efeito indireto também. A previsão de que o p95 de `vendas-por-dia` cairia muito errou: ficou na mesma faixa.
+
+**O que refutaria:** o CPU da API por requisição de `vendas-por-dia` não cair claramente, ou o p95 geral não cair.
