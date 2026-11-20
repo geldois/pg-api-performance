@@ -1,0 +1,39 @@
+$ docker compose exec -T banco psql -U loja -d loja -c "EXPLAIN (ANALYZE, BUFFERS) SELECT * FROM produtos WHERE nome ILIKE '%' || 'cadeira' || '%' ORDER BY nome, id LIMIT 20" (2026-11-20, duas execuções seguidas, banco ocioso, commit 6bd7014 em execução; a consulta é a de api/src/rotas.js, rota /produtos/busca, com o termo "cadeira" do gerador de carga)
+
+execução 1
+ Limit  (cost=466.88..466.93 rows=20 width=44) (actual time=24.619..24.635 rows=20 loops=1)
+   Buffers: shared hit=6 read=190
+   ->  Sort  (cost=466.88..469.40 rows=1010 width=44) (actual time=24.614..24.628 rows=20 loops=1)
+         Sort Key: nome, id
+         Sort Method: top-N heapsort  Memory: 27kB
+         Buffers: shared hit=6 read=190
+         ->  Seq Scan on produtos  (cost=0.00..440.00 rows=1010 width=44) (actual time=1.671..23.881 rows=1000 loops=1)
+               Filter: (nome ~~* '%cadeira%'::text)
+               Rows Removed by Filter: 19000
+               Buffers: shared read=190
+ Planning:
+   Buffers: shared hit=77 read=6
+ Planning Time: 20.487 ms
+ Execution Time: 24.719 ms
+
+execução 2
+ Limit  (cost=466.88..466.93 rows=20 width=44) (actual time=17.307..17.311 rows=20 loops=1)
+   Buffers: shared hit=196
+   ->  Sort  (cost=466.88..469.40 rows=1010 width=44) (actual time=17.306..17.308 rows=20 loops=1)
+         Sort Key: nome, id
+         Sort Method: top-N heapsort  Memory: 27kB
+         Buffers: shared hit=196
+         ->  Seq Scan on produtos  (cost=0.00..440.00 rows=1010 width=44) (actual time=0.029..16.666 rows=1000 loops=1)
+               Filter: (nome ~~* '%cadeira%'::text)
+               Rows Removed by Filter: 19000
+               Buffers: shared hit=190
+ Planning:
+   Buffers: shared hit=83
+ Planning Time: 0.555 ms
+ Execution Time: 17.334 ms
+
+$ docker compose exec -T banco psql -U loja -d loja -At -c "SELECT count(*) FROM produtos; SELECT count(*) FROM produtos WHERE nome ILIKE '%cadeira%'; SELECT pg_size_pretty(pg_relation_size('produtos')); SELECT indexdef FROM pg_indexes WHERE tablename='produtos'"
+20000
+1000
+1520 kB
+CREATE UNIQUE INDEX produtos_pkey ON public.produtos USING btree (id)

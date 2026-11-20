@@ -24,7 +24,7 @@ Ideias com status "Pesquisada, teste futuro": apareceram na pesquisa ou nas medi
 
 **O que precisaria:** conferir que a extensão `pg_trgm` existe na imagem do PostgreSQL usada e criá-la num `.sql` novo em `banco/`, com o banco recriado. Precisaria medir o tamanho do índice e o tempo de construção, porque índice maior consome memória, e o banco já chegou ao limite de 512 MiB na 07 (`diagnostico/13-memoria-do-banco-na-07.txt`).
 
-**Por que não testei aqui:** a busca não foi diagnosticada com `EXPLAIN` (consta como não diagnosticada em `diagnostico/indice.md`), e o tempo disponível nesta entrega não deixou espaço para diagnosticar e medir.
+**Por que não testei aqui:** a busca foi diagnosticada com `EXPLAIN` (`diagnostico/34-busca-produtos.txt`: `Seq Scan` nas 20.000 linhas, 16,666 ms de 17,334 ms), mas o índice trigrama não foi criado nem medido, e o tempo disponível nesta entrega não deixou espaço para isso.
 
 ## 3. Perfil de CPU da API
 
@@ -61,3 +61,15 @@ Ideias com status "Pesquisada, teste futuro": apareceram na pesquisa ou nas medi
 **O que precisaria:** declarar no artigo que o antes e o depois da comparação principal usam os limites originais, e esta curva fica como medida à parte. Também precisaria de uma leitura de CPU confiável, que neste ambiente só o cgroup dá.
 
 **Por que não testei aqui:** a comparação principal deste trabalho usa os limites originais (`contexto.txt` de cada pasta), então esta medida entraria como mudança própria no fim, e não coube no tempo disponível.
+
+## 6. Cache externo na frente do banco
+
+**De onde veio:** é a alternativa D da tabela de alternativas do artigo, descartada sem teste. Fonte: [Amazon ElastiCache, Caching strategies for Memcached](https://docs.aws.amazon.com/AmazonElastiCache/latest/dg/Strategies.html), que diz que, se o dado só é escrito no cache quando há uma falha de leitura, "data in the cache can become stale", e que "There is a cache miss penalty", porque cada falha custa três idas (ao cache, ao banco e a escrita no cache). A fonte é de um fornecedor e descreve o padrão geral, sem medir este caso. Acesso em 2026-11-20.
+
+**O que eu acredito que ganharia (hipótese):** repetições de leitura seriam atendidas da memória, e o banco, que voltou a ser o gargalo depois da 14 (`diagnostico/29-cpu-e-memoria-na-14.txt`), receberia menos consultas. O ganho dependeria da taxa de acerto do cache, que eu não medi. O teste de carga repete poucos valores na busca (12 termos) e muitos nas rotas de cliente (100 mil e-mails), então a taxa de acerto seria bem diferente por rota (`carga/teste-carga.js`). É só hipótese.
+
+**Como testaria:** um serviço de cache no `docker-compose.yml`, a API lendo do cache nas rotas mais repetidas, e três medições com a taxa de acerto e o p95, comparando o ganho com o custo de CPU e de memória do serviço novo, como pede o enunciado para qualquer recurso a mais.
+
+**O que precisaria:** o serviço novo com limites declarados, uma regra de expiração ou de invalidação do dado e uma decisão sobre mostrar dado antigo.
+
+**Por que não testei aqui:** um serviço a mais custa mais, o dado pode ficar antigo, e o tempo disponível nesta entrega foi para o que dava para medir dentro dos limites originais.
