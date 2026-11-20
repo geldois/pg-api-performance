@@ -16,6 +16,7 @@ Uma linha por ideia aplicada na tabela, e os detalhes de cada uma na seção log
 | 10 | Índice `(status, criado_em DESC, id DESC) INCLUDE (cliente_id)` no lugar do `indice_pedidos`, e a página de `/pedidos` só com as 4 colunas da resposta | [PostgreSQL 16, 11.9 Index-Only Scans and Covering Indexes](https://www.postgresql.org/docs/16/indexes-index-only-scans.html) e [PostgreSQL 16, CREATE INDEX](https://www.postgresql.org/docs/16/sql-createindex.html) | Aplicada e medida | 46,39 req/s, p95 1.532,5 ms | 52,09 req/s, p95 1.298,8 ms | Antes: `resultados/20261119-20*-09-pedidos-total-view` (3). Depois: `resultados/20261119-22*-10-pedidos-indice-cobrindo` (3) | O p95 de `pedidos-por-status` caiu de 2.026,7 para 683,4 ms e o p95 geral também caiu, mas `cliente`, `pedidos-do-cliente` e `busca-produtos` ficaram mais lentas |
 | 11 | Índice `(lower(email), id)` em `clientes` | [PostgreSQL 16, 11.7](https://www.postgresql.org/docs/16/indexes-expressional.html) e [PostgreSQL 16, 11.3](https://www.postgresql.org/docs/16/indexes-multicolumn.html) | Aplicada e medida | 52,09 req/s, p95 1.298,8 ms | 60,43 req/s, p95 972,5 ms | Antes: `resultados/20261119-22*-10-pedidos-indice-cobrindo` (3). Depois: `resultados/20261119-22*-11-clientes-indice-email` (3) | O p95 de `cliente-por-email` caiu de 1.616,0 para 709,6 ms e o p95 geral também caiu, mas `pedidos-por-status`, `cliente` e `pedidos-do-cliente` ficaram mais lentas |
 | 12 | Pool com `max` 10 de novo | [node-postgres, Pool](https://node-postgres.com/apis/pool) e [node-postgres, Pool sizing](https://node-postgres.com/guides/pool-sizing) | Aplicada e medida | 60,43 req/s, p95 972,5 ms | 61,03 req/s, p95 786,3 ms | Antes: `resultados/20261119-22*-11-clientes-indice-email` (3). Depois: `resultados/20261120-10*-12-pool-max-10` (3) | O p95 geral caiu, mas a rota que mais variou foi `busca-produtos`, e não `cliente`. A API ficou no teto de CPU |
+| 13 | Log da API sem o corpo da resposta | [Express, Production best practices: performance and reliability](https://expressjs.com/en/advanced/best-practice-performance.html) | Aplicada, sem ganho | 61,03 req/s, p95 786,3 ms | 60,64 req/s, p95 793,3 ms | Antes: `resultados/20261120-102*-12-pool-max-10` (3). Depois: `resultados/20261120-103*-13-log-sem-corpo` (3) | O p95 geral e o req/s ficaram na mesma faixa, e a API continuou no teto de CPU |
 
 ## 01 Índice em `itens_pedido(pedido_id)`
 
@@ -541,3 +542,46 @@ Uma linha por ideia aplicada na tabela, e os detalhes de cada uma na seção log
 **Contra a hipótese do commit:** pelo critério do commit, a hipótese foi refutada em parte. A primeira parte se confirmou: o p95 geral caiu de 972,5 para 786,3 ms. A previsão de rota errou: o commit nomeia `/clientes/:id` (`cliente`, de 692,7 para 610,9 ms, queda de 11,8%, com faixas que se sobrepõem), e a rota que mais variou em termos relativos foi `busca-produtos` (queda de 22,5%), seguida de `vendas-por-dia` (queda de 20,8%) e `top-produtos` (alta de 19,1%), as três com faixas sem sobreposição. Se a rota pensada fosse `pedidos-do-cliente`, o resultado seria o mesmo, porque ela caiu só 5,5%. `cliente-por-email` caiu 13,3%, mais que `cliente`, mas com faixas que se sobrepõem às da 11. A segunda condição do "o que refutaria", outra rota variar mais que `/clientes/:id`, aconteceu.
 
 **O que refutaria:** o p95 geral não cair, ou outra rota variar mais que `/clientes/:id`.
+
+## 13 Log da API sem o corpo da resposta
+
+**Rótulo:** `13-log-sem-corpo`
+
+**Ideia e fonte:** tirar o corpo da resposta do log de cada requisição, em `api/src/server.js` (a linha `resposta: corpo`). A ideia vem da leitura de CPU da 12, em que a API ficou no teto de 0,5 CPU. Fonte: [Express, Production best practices: performance and reliability](https://expressjs.com/en/advanced/best-practice-performance.html), seção "Do logging correctly", que diz que `console.log()` e `console.error()` "are synchronous when the destination is a terminal or a file, so they are not suitable for production, unless you pipe the output to another program". A página não fala de registrar o corpo da resposta e não mede o custo de registrar, então não prova ganho aqui. Acesso em 2026-11-20.
+
+**Status:** Aplicada, sem ganho.
+
+**Hipótese** (commit `0548f9b`): parar de gravar o corpo de cada resposta no log deve reduzir o p95 geral, porque a API está no teto de 0,5 CPU (estrangulada em cerca de 95% dos períodos na 12) e deixa de serializar cada resposta. Previsão: as rotas de resposta grande (pedidos-do-cliente, busca-produtos e pedidos-por-status) ganham mais, e cliente e cliente-por-email quase não mudam em termos relativos. O custo é que o log deixa de ter o corpo, o que atrapalha depurar. O que refutaria: o p95 geral não cair, ou cliente variar mais que pedidos-do-cliente.
+
+**Antes usado:** mudança 12.
+- `resultados/20261120-102256-12-pool-max-10`
+- `resultados/20261120-102415-12-pool-max-10`
+- `resultados/20261120-102534-12-pool-max-10`
+
+**Depois:**
+- `resultados/20261120-103448-13-log-sem-corpo`
+- `resultados/20261120-103607-13-log-sem-corpo`
+- `resultados/20261120-103726-13-log-sem-corpo`
+
+**Commit medido:** os `contexto.txt` das três execuções citam `0548f9b`, com `arquivos alterados sem commit: 0`, e o contrato terminou em "Contrato mantido" (42 respostas) ao fim de cada uma. A API foi reconstruída com `docker compose up -d --build` e o banco não foi recriado (não há `.sql` novo).
+
+**Execuções usadas e não usadas:** três tentativas, três pastas, todas usadas. As três tiveram 0,00% de erros, swap do banco e da API em 0 e nenhum evento em `memory.events` antes e depois de cada uma (`diagnostico/27-cpu-e-memoria-na-13.txt`).
+
+**Resultado** (medianas, antes → depois, com a faixa das execuções da 13 entre parênteses):
+- Requisições por segundo: 61,03 → 60,64 (60,51 a 61,99)
+- p95 geral: 786,3 → 793,3 ms (767,9 a 822,2)
+- p95 de `pedidos-do-cliente`: 658,3 → 683,3 ms (601,1 a 703,6)
+- p95 de `busca-produtos`: 761,4 → 711,1 ms (676,4 a 779,4)
+- p95 de `pedidos-por-status`: 873,2 → 871,0 ms (834,8 a 895,3)
+- p95 de `cliente`: 610,9 → 618,6 ms (592,2 a 664,3)
+- p95 de `cliente-por-email`: 615,5 → 639,0 ms (615,8 a 671,7)
+- p95 de `vendas-por-dia`: 1.104,3 → 1.145,7 ms (1.074,4 a 1.197,5)
+- p95 de `top-produtos`: 691,6 → 594,0 ms (484,1 a 682,5)
+- Memória média do banco: 184,2 → 183,7 MiB (183,2 a 184,0). Da API: 40,1 → 40,3 MiB (38,3 a 40,7)
+- CPU do cgroup (`diagnostico/27-cpu-e-memoria-na-13.txt`): API estrangulada em 95% a 96% dos períodos, usando 37,6 a 38,1 s por execução, e banco estrangulado em 23% a 27%, usando 40,3 a 40,5 s. Na 12 (`diagnostico/26-cpu-e-memoria-na-12.txt`) foram 37,7 a 38,0 s e 95% a 96% na API, e 40,0 a 40,5 s e 29% a 33% no banco. O CPU do `podman stats` continua sem ser citado
+
+**Conclusão:** não valeu. O p95 geral ficou na mesma faixa (786,3 contra 793,3 ms, com faixas de 780,2 a 870,7 e de 767,9 a 822,2 que se sobrepõem), e o req/s também (61,03 contra 60,64). As faixas das sete rotas na 13 se sobrepõem às que elas tinham na 12. `busca-produtos` (761,4 para 711,1 ms) e `top-produtos` (691,6 para 594,0 ms) foram as que mais caíram na mediana, mas com faixas que se sobrepõem, e `top-produtos` tem poucas requisições por execução. O CPU do cgroup é praticamente o mesmo da 12: a API usou 37,6 a 38,1 s por execução e ficou estrangulada em 95% a 96% dos períodos nas duas medições. Então a serialização do corpo no log não era o que consumia a CPU da API, ou era uma parte pequena demais para aparecer na medição. Não sei o que consome a CPU da API, porque não fiz um perfil dela. Explicação provável, ainda sem prova: é trabalho do Node na leitura das linhas do banco, como a soma em JavaScript de `vendas-por-dia`, e isso fica como próximo teste. O custo da mudança, menos informação no log para depurar, não teve contrapartida medida. Ela fica no código por enquanto, e reverter seria uma mudança própria.
+
+**Contra a hipótese do commit:** pelo critério do commit, a hipótese foi refutada, porque o p95 geral não caiu (de 786,3 para 793,3 ms, na mesma faixa). A previsão de rota também não se confirmou: `pedidos-do-cliente` foi de 658,3 para 683,3 ms e `pedidos-por-status` de 873,2 para 871,0 ms, e `busca-produtos`, a que mais caiu das três (de 761,4 para 711,1 ms), tem faixas que se sobrepõem. A segunda condição do "o que refutaria", `cliente` variar mais que `pedidos-do-cliente`, não aconteceu (`cliente` subiu 1,3% e `pedidos-do-cliente` 3,8%).
+
+**O que refutaria:** o p95 geral não cair, ou `cliente` variar mais que `pedidos-do-cliente`.

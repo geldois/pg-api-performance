@@ -1,0 +1,23 @@
+$ leitura de cpu.stat, memory.swap.current, memory.swap.max e memory.events do cgroup do container do banco e do da API, antes e depois de cada execução de scripts/medir.sh 13-log-sem-corpo (2026-11-20, sem recriar o banco, API reconstruída com docker compose up -d --build, commit medido 0548f9b)
+
+Limites lidos antes das execuções (nível do container, o efetivo):
+- banco: cpu.max 100000 100000, memory.max 536870912 (512 MiB), memory.swap.max 536870912 (padrão do container)
+- api: cpu.max 50000 100000, memory.max 268435456 (256 MiB), memory.swap.max 268435456 (padrão do container)
+
+Memória, nas 6 leituras (antes e depois de cada execução): memory.swap.current 0 nos dois containers, e memory.events dos dois com "low 0 high 0 max 0 oom 0 oom_kill 0 oom_group_kill 0".
+
+CPU, diferença entre a leitura de antes e a de depois de cada execução (cpu.stat do cgroup, e o intervalo entre as leituras é de cerca de 79 s e inclui o aquecimento, a carga e a conferência do contrato do medir.sh, então o CPU médio por intervalo é aproximado, e a fração de períodos estrangulados é a medida direta do teto):
+
+exec  pasta                                api: CPU usada, períodos estrangulados      banco: CPU usada, períodos estrangulados
+1     20261120-103448-13-log-sem-corpo     38,1 s, 747 de 779 (96%)                    40,5 s, 179 de 764 (23%)
+2     20261120-103607-13-log-sem-corpo     37,7 s, 738 de 775 (95%)                    40,4 s, 206 de 752 (27%)
+3     20261120-103726-13-log-sem-corpo     37,6 s, 731 de 772 (95%)                    40,3 s, 204 de 755 (27%)
+
+Leituras brutas de cpu.stat (usage_usec, nr_periods, nr_throttled):
+- antes da exec 1:  api 968161 35 15 | banco 196252370 3939 1118
+- antes da exec 2:  api 39026265 814 762 | banco 236790600 4703 1297
+- antes da exec 3:  api 76701715 1590 1500 | banco 277159898 5455 1503
+- depois da exec 3: api 114335880 2362 2231 | banco 317498355 6210 1707
+(a leitura depois de cada execução é igual à de antes da seguinte, a menos de ruído de 1 período e de poucos microssegundos)
+
+Comparação com a 12: diagnostico/26-cpu-e-memoria-na-12.txt.
