@@ -1,0 +1,17 @@
+Medição: 11-clientes-indice-email
+Carga: 20 usuários virtuais por 60s
+
+Requisições:        3650
+Requisições/s:      60.43
+Tempo de resposta:  mediana 265.8 ms | p95 911.6 ms | p99 1191.3 ms
+Erros:              0.00%
+
+Por rota:
+rota                  req       mediana       p95           p99           erros   
+cliente               952       188.0 ms      656.1 ms      900.1 ms      0.0%    
+cliente-por-email     526       198.6 ms      726.0 ms      1099.0 ms     0.0%    
+pedidos-do-cliente    744       189.3 ms      676.1 ms      945.4 ms      0.0%    
+pedidos-por-status    527       284.9 ms      839.5 ms      1101.7 ms     0.0%    
+busca-produtos        546       381.5 ms      975.1 ms      1133.3 ms     0.0%    
+vendas-por-dia        292       781.0 ms      1289.1 ms     1532.8 ms     0.0%    
+top-produtos          63        248.8 ms      580.9 ms      748.4 ms      0.0%    
