@@ -15,6 +15,7 @@ Uma linha por ideia aplicada na tabela, e os detalhes de cada uma na seção log
 | 09 | `/pedidos` lê o total da view materializada `contagem_pedidos_por_status` | [PostgreSQL 16, 41.3 Materialized Views](https://www.postgresql.org/docs/16/rules-materializedviews.html) | Aplicada e medida | 41,45 req/s, p95 1.644,1 ms | 46,39 req/s, p95 1.532,5 ms | Antes: `resultados/20261119-19*-08-top-produtos-view` (3). Depois: `resultados/20261119-20*-09-pedidos-total-view` (3) | O req/s subiu e a mediana de `pedidos-por-status` caiu de 870,8 para 276,3 ms, mas o p95 da rota e o geral ficaram na mesma faixa |
 | 10 | Índice `(status, criado_em DESC, id DESC) INCLUDE (cliente_id)` no lugar do `indice_pedidos`, e a página de `/pedidos` só com as 4 colunas da resposta | [PostgreSQL 16, 11.9 Index-Only Scans and Covering Indexes](https://www.postgresql.org/docs/16/indexes-index-only-scans.html) e [PostgreSQL 16, CREATE INDEX](https://www.postgresql.org/docs/16/sql-createindex.html) | Aplicada e medida | 46,39 req/s, p95 1.532,5 ms | 52,09 req/s, p95 1.298,8 ms | Antes: `resultados/20261119-20*-09-pedidos-total-view` (3). Depois: `resultados/20261119-22*-10-pedidos-indice-cobrindo` (3) | O p95 de `pedidos-por-status` caiu de 2.026,7 para 683,4 ms e o p95 geral também caiu, mas `cliente`, `pedidos-do-cliente` e `busca-produtos` ficaram mais lentas |
 | 11 | Índice `(lower(email), id)` em `clientes` | [PostgreSQL 16, 11.7](https://www.postgresql.org/docs/16/indexes-expressional.html) e [PostgreSQL 16, 11.3](https://www.postgresql.org/docs/16/indexes-multicolumn.html) | Aplicada e medida | 52,09 req/s, p95 1.298,8 ms | 60,43 req/s, p95 972,5 ms | Antes: `resultados/20261119-22*-10-pedidos-indice-cobrindo` (3). Depois: `resultados/20261119-22*-11-clientes-indice-email` (3) | O p95 de `cliente-por-email` caiu de 1.616,0 para 709,6 ms e o p95 geral também caiu, mas `pedidos-por-status`, `cliente` e `pedidos-do-cliente` ficaram mais lentas |
+| 12 | Pool com `max` 10 de novo | [node-postgres, Pool](https://node-postgres.com/apis/pool) e [node-postgres, Pool sizing](https://node-postgres.com/guides/pool-sizing) | Aplicada e medida | 60,43 req/s, p95 972,5 ms | 61,03 req/s, p95 786,3 ms | Antes: `resultados/20261119-22*-11-clientes-indice-email` (3). Depois: `resultados/20261120-10*-12-pool-max-10` (3) | O p95 geral caiu, mas a rota que mais variou foi `busca-produtos`, e não `cliente`. A API ficou no teto de CPU |
 
 ## 01 Índice em `itens_pedido(pedido_id)`
 
@@ -497,3 +498,46 @@ Uma linha por ideia aplicada na tabela, e os detalhes de cada uma na seção log
 **Contra a hipótese do commit:** pelos dois critérios do commit, a hipótese não foi refutada: o p95 de `cliente-por-email` caiu claramente da mediana anterior (1.616,0 ms), com faixas sem sobreposição, e o p95 geral melhorou, de 1.298,8 para 972,5 ms, também sem sobreposição. A previsão de que o p95 da rota cairia se confirmou. Não havia previsão sobre as outras rotas, e três delas ficaram mais lentas.
 
 **O que refutaria:** o p95 de `cliente-por-email` não cair claramente da mediana anterior (1.616,0 ms na 10), ou o p95 geral não melhorar.
+
+## 12 Pool com `max` 10 de novo
+
+**Rótulo:** `12-pool-max-10`
+
+**Ideia e fonte:** voltar o `max` do pool de 20 para 10, o padrão do `pg`, em `api/src/db.js`. A 04 subiu o `max` para 20 quando as rotas pesadas eram o gargalo e o p95 geral piorou. Agora elas estão rápidas, e a pergunta é se o `max` 20 ainda compensa. Fontes: [node-postgres, Pool](https://node-postgres.com/apis/pool), que diz sobre o `max` que "By default this is set to 10", e [node-postgres, Pool sizing](https://node-postgres.com/guides/pool-sizing), que diz "I don’t bother setting it to anything other than the default of `10`". A segunda não é uma medição deste trabalho. Acesso em 2026-11-18, conferido de novo em 2026-11-20.
+
+**Status:** Aplicada e medida.
+
+**Hipótese** (commit `66aa51e`): baixar o max do pool de 20 para 10 deve reduzir o p95 geral, porque com as rotas pesadas já rápidas (índices e views) menos consultas simultâneas dividem a CPU do banco, limitado a 1 CPU. Previsão: a rota que mais muda é /clientes/:id (a leve que passa a esperar na fila do pool); as outras ficam perto do que estão. O que refutaria: o p95 geral não cair, ou outra rota variar mais que /clientes/:id.
+
+**Antes usado:** mudança 11.
+- `resultados/20261119-223843-11-clientes-indice-email`
+- `resultados/20261119-224002-11-clientes-indice-email`
+- `resultados/20261119-224120-11-clientes-indice-email`
+
+**Depois:**
+- `resultados/20261120-102256-12-pool-max-10`
+- `resultados/20261120-102415-12-pool-max-10`
+- `resultados/20261120-102534-12-pool-max-10`
+
+**Commit medido:** os `contexto.txt` das três execuções citam `66aa51e`, com `arquivos alterados sem commit: 0`, e o contrato terminou em "Contrato mantido" (42 respostas) ao fim de cada uma. O banco não foi recriado (não há `.sql` novo).
+
+**Execuções usadas e não usadas:** três tentativas válidas, todas usadas, com 0,00% de erros, swap do banco e da API em 0 e nenhum evento em `memory.events` antes e depois de cada uma (`diagnostico/26-cpu-e-memoria-na-12.txt`). Duas execuções anteriores, feitas sobre uma versão do commit que foi reescrita e depois restaurada, foram interrompidas e apagadas, porque o `contexto.txt` citaria um hash que deixou de existir.
+
+**Resultado** (medianas, antes → depois, com a faixa das execuções da 12 entre parênteses):
+- Requisições por segundo: 60,43 → 61,03 (60,54 a 61,05)
+- p95 geral: 972,5 → 786,3 ms (780,2 a 870,7)
+- p95 de `busca-produtos`: 982,3 → 761,4 ms (733,6 a 761,5)
+- p95 de `vendas-por-dia`: 1.395,0 → 1.104,3 ms (1.065,3 a 1.124,7)
+- p95 de `cliente`: 692,7 → 610,9 ms (600,4 a 728,3)
+- p95 de `cliente-por-email`: 709,6 → 615,5 ms (590,4 a 732,0)
+- p95 de `pedidos-do-cliente`: 696,8 → 658,3 ms (603,7 a 660,4)
+- p95 de `pedidos-por-status`: 873,4 → 873,2 ms (831,3 a 955,2)
+- p95 de `top-produtos`: 580,9 → 691,6 ms (637,0 a 870,2)
+- Memória média do banco: 213,1 → 184,2 MiB (183,7 a 184,8). Da API: 44,3 → 40,1 MiB (39,2 a 40,4)
+- CPU do cgroup (`diagnostico/26-cpu-e-memoria-na-12.txt`): API estrangulada em 95% a 96% dos períodos, usando cerca de 0,48 CPU do teto de 0,5, e banco estrangulado em 29% a 33%, usando cerca de 0,51 CPU do teto de 1. O CPU do `podman stats` continua sem ser citado
+
+**Conclusão:** o p95 geral caiu de 972,5 para 786,3 ms, com faixas sem sobreposição (911,6 a 990,5 contra 780,2 a 870,7). O req/s ficou na mesma faixa (58,15 a 60,55 contra 60,54 a 61,05, que se tocam por 0,01). Caíram, com faixas sem sobreposição, `busca-produtos`, `vendas-por-dia` e `pedidos-do-cliente`. `cliente`, `cliente-por-email` e `pedidos-por-status` ficaram na mesma faixa. `top-produtos` subiu de 580,9 para 691,6 ms, sem sobreposição (578,6 a 592,5 contra 637,0 a 870,2), mas com só 62 a 64 requisições por execução e uma faixa larga na 12. A memória média caiu no banco e na API, sem sobreposição das faixas, e a causa provável, ainda sem prova, é terem menos conexões abertas no banco. Não medi o CPU do banco na 11, então não sei se a queda do p95 geral veio de menos disputa pela CPU do banco, como a hipótese supunha. A leitura do cgroup mostra que a API passou a ser o limite: nas três execuções ela ficou no teto de 0,5 CPU, e na linha de base (`diagnostico/00-cpu-por-cgroup-linha-de-base.txt`) ela estava estrangulada em menos de 1% dos períodos e o banco em cerca de 98%. Só tenho leitura de estrangulamento na linha de base e na 12, então não sei em qual mudança o limite migrou do banco para a API.
+
+**Contra a hipótese do commit:** pelo critério do commit, a hipótese foi refutada em parte. A primeira parte se confirmou: o p95 geral caiu de 972,5 para 786,3 ms. A previsão de rota errou: o commit nomeia `/clientes/:id` (`cliente`, de 692,7 para 610,9 ms, queda de 11,8%, com faixas que se sobrepõem), e a rota que mais variou em termos relativos foi `busca-produtos` (queda de 22,5%), seguida de `vendas-por-dia` (queda de 20,8%) e `top-produtos` (alta de 19,1%), as três com faixas sem sobreposição. Se a rota pensada fosse `pedidos-do-cliente`, o resultado seria o mesmo, porque ela caiu só 5,5%. `cliente-por-email` caiu 13,3%, mais que `cliente`, mas com faixas que se sobrepõem às da 11. A segunda condição do "o que refutaria", outra rota variar mais que `/clientes/:id`, aconteceu.
+
+**O que refutaria:** o p95 geral não cair, ou outra rota variar mais que `/clientes/:id`.

@@ -1,0 +1,22 @@
+$ leitura de cpu.stat, memory.swap.current, memory.swap.max e memory.events do cgroup do container do banco e do da API, antes e depois de cada execução de scripts/medir.sh 12-pool-max-10 (2026-11-20, sem recriar o banco, commit medido 66aa51e)
+
+Limites lidos antes das execuções (nível do container, o efetivo):
+- banco: cpu.max 100000 100000, memory.max 536870912 (512 MiB), memory.swap.max 536870912 (padrão do container)
+- api: cpu.max 50000 100000, memory.max 268435456 (256 MiB), memory.swap.max 268435456 (padrão do container)
+
+Memória, nas 6 leituras (antes e depois de cada execução): memory.swap.current 0 nos dois containers, e memory.events dos dois com "low 0 high 0 max 0 oom 0 oom_kill 0 oom_group_kill 0".
+
+CPU, diferença entre a leitura de antes e a de depois de cada execução (cpu.stat do cgroup, e o intervalo entre as leituras é de cerca de 79 s e inclui o aquecimento, a carga e a conferência do contrato do medir.sh, então o CPU médio por intervalo é aproximado, e a fração de períodos estrangulados é a medida direta do teto):
+
+exec  pasta                              api: CPU usada, períodos estrangulados      banco: CPU usada, períodos estrangulados
+1     20261120-102256-12-pool-max-10     38,0 s, 748 de 778 (96%)                    40,5 s, 221 de 757 (29%)
+2     20261120-102415-12-pool-max-10     37,7 s, 735 de 776 (95%)                    40,0 s, 242 de 737 (33%)
+3     20261120-102534-12-pool-max-10     37,8 s, 739 de 778 (95%)                    40,3 s, 234 de 742 (32%)
+
+Leituras brutas de cpu.stat (usage_usec, nr_periods, nr_throttled):
+- antes da exec 1:  api 66133368 1384 1270 | banco 71839389 1415 419
+- depois da exec 1: api 104120614 2162 2018 | banco 112353417 2172 640
+- depois da exec 2: api 141833341 2938 2753 | banco 152347424 2909 882
+- depois da exec 3: api 179677005 3716 3492 | banco 192671341 3651 1116
+
+Comparação com a linha de base: diagnostico/00-cpu-por-cgroup-linha-de-base.txt.
