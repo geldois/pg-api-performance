@@ -2,7 +2,7 @@
 
 ## 1. Resumo
 
-A API de uma loja fictícia atendia 4,21 requisições por segundo, com p95 geral (o tempo abaixo do qual ficam 95% das respostas) de 14.698,7 ms, porque as consultas liam tabelas inteiras sem índice, faziam uma consulta por item (N+1) e abriam uma conexão por consulta. Foram 14 mudanças, cada uma com hipótese e medições repetidas, nos mesmos limites de CPU e memória. Com índices, duas views materializadas (resultados guardados como tabela) e consultas reescritas, a vazão chegou a 115,08 req/s e o p95 geral a 524,7 ms. Duas mudanças não deram ganho, e as views só servem porque a API só lê.
+A API de uma loja fictícia atendia 4,21 requisições por segundo, com p95 geral (o tempo abaixo do qual ficam 95% das respostas) de 14.698,7 ms, porque as consultas liam tabelas inteiras sem índice, faziam uma consulta por item (N+1) e abriam uma conexão por consulta. Foram 14 mudanças, cada uma medida pelo menos três vezes, nos mesmos limites de CPU e memória. Com índices, duas views materializadas e consultas reescritas, a vazão chegou a 115,08 req/s e o p95 geral a 524,7 ms. Duas mudanças não deram ganho, e as views só servem porque a API só lê.
 
 ## 2. Contexto e diagnóstico
 
@@ -15,24 +15,24 @@ Hipótese por problema:
 - **`/clientes/:id/pedidos`:** N+1 (uma consulta para a lista de pedidos e outra por pedido e por item), e cada leitura de itens percorre cerca de 1,5 milhão de linhas, sem índice em `pedido_id`.
 - **`/clientes?email=`:** falta de índice, e o banco percorre as 100.000 linhas para achar 1. Um índice comum em `email` não serviria, porque a consulta compara `lower(email)`, o e-mail em minúsculas.
 - **`/relatorios/top-produtos`:** o tempo vai nas junções entre tabelas e no agrupamento, e um índice tende a não resolver, porque a consulta usa a maior parte delas.
-- **`/pedidos?status=`:** a ordenação em disco (`external merge`) de cerca de 300 mil linhas para devolver 20, mais uma segunda consulta para a contagem.
-- **`/relatorios/vendas-por-dia`:** o filtro `criado_em::date` impede o uso de um índice, e a soma por dia era feita no Node, o que ocupava a CPU da API (`diagnostico/28`).
-- **`/produtos/busca`:** um `Seq Scan` nas 20.000 linhas, porque `ILIKE '%termo%'` começa com `%` e um índice comum não o atende (`diagnostico/34`).
-- **Conexão a cada consulta:** pesa na negociação de abertura, na rede e na CPU. 100 requisições abriram 101 sessões (`diagnostico/06`).
+- **`/pedidos?status=`:** ordenação em disco (`external merge`) de cerca de 300 mil linhas para devolver 20, mais uma consulta para a contagem.
+- **`/relatorios/vendas-por-dia`:** o filtro `criado_em::date` impede um índice, e a soma por dia era feita no Node (`diagnostico/28`).
+- **`/produtos/busca`:** `Seq Scan` nas 20.000 linhas, porque `ILIKE '%termo%'` começa com `%` e um índice comum não o atende (`diagnostico/34`).
+- **Conexão a cada consulta:** pesa na abertura, na rede e na CPU. 100 requisições abriram 101 sessões (`diagnostico/06`).
 
 ## 3. Estado da arte
 
-**Índices e a escolha do planejador.** O planejador de consultas do PostgreSQL escolhe o caminho de menor custo estimado, a mesma ideia do System R, em Selinger et al., em que o custo é páginas lidas mais W vezes as chamadas ao armazenamento [1]. Ele estima 1,0 para uma página lida em sequência e 4,0 para uma lida fora de ordem [2], e a busca pelo índice (index scan) é estimada mais barata quanto mais a ordem física das linhas acompanha a da coluna, a correlação [3]. Um índice também pode guardar colunas extras com `INCLUDE`: se a consulta só precisa delas [12], um index-only scan as devolve "without having to visit the index's table", mas elas "bloat the size of the index" [13]. O `CLUSTER` reordena a tabela uma vez, e depois "no attempt is made to store new or updated rows according to their index order" [4]. **Minha leitura:** assintoticamente um índice, O(log N + k), vence a leitura linear seguida de ordenação, O(N + k log k), com k as linhas devolvidas, mas o custo de cada acesso muda isso: quanto maior o k, mais saltos aleatórios no heap o índice faz, e a ordem física pode se desfazer com o tempo, já que o `VACUUM` só marca o espaço de linhas removidas para reutilização [5]. O `INCLUDE` troca um índice maior e mais custo de escrita por não visitar o heap.
+**Índices e a escolha do planejador.** O planejador do PostgreSQL escolhe o caminho de menor custo estimado, a mesma ideia do System R, em Selinger et al. [1]. Ele estima 1,0 para uma página lida em sequência e 4,0 para uma lida fora de ordem [2], e o index scan fica mais barato quanto mais a ordem física das linhas acompanha a da coluna [3]. Um índice com `INCLUDE` guarda colunas extras, e o index-only scan as devolve "without having to visit the index's table" [12], mas elas "bloat the size of the index" [13]. **Minha leitura:** assintoticamente um índice, O(log N + k), vence a leitura linear seguida de ordenação, O(N + k log k), com k as linhas devolvidas, mas quanto maior o k, mais saltos aleatórios no heap, e a ordem física se desfaz com o tempo, porque o `CLUSTER` não mantém a ordem das linhas novas [4] e o `VACUUM` só marca o espaço para reutilização [5].
 
 **Dado derivado.** Uma view materializada guarda o resultado da consulta como uma tabela, e "the data is not always current; yet sometimes current data is not needed" [6]. O `REFRESH MATERIALIZED VIEW CONCURRENTLY` atualiza sem bloquear leituras e exige um índice `UNIQUE` [7].
 
-**Reescrever a consulta e as conexões.** O N+1 (uma consulta para a lista e outra por item) cai de 11 consultas para 2 com carregamento antecipado, nos Rails Guides [8]. Segundo o node-postgres, uma conexão nova exige um handshake de 20 a 30 ms, e ele recomenda um pool, um conjunto de conexões reaproveitadas [9] (afirmação da biblioteca, sem método). Um cache externo tem o mesmo problema de dado antigo, e cada falha de leitura custa três idas (ao cache, ao banco e a escrita no cache) [14], texto de um fornecedor, sem medir este caso.
+**Reescrever a consulta e as conexões.** O N+1 (uma consulta para a lista e outra por item) cai de 11 consultas para 2 com carregamento antecipado, nos Rails Guides [8]. Segundo o node-postgres, uma conexão nova exige um handshake de 20 a 30 ms, e ele recomenda um pool de conexões reaproveitadas [9] (afirmação sem método). Num cache externo, cada falha de leitura custa três idas (cache, banco e escrita no cache) [14], texto de um fornecedor.
 
-**Medir com rigor.** Amdahl argumentou que o esforço em processamento paralelo é desperdiçado se a parte sequencial não melhora na mesma medida [10]. **Minha leitura:** apliquei a ideia ao medir a CPU por rota: na `vendas-por-dia`, a soma no JavaScript era, pela conta de `diagnostico/28` (CPU por requisição medido sem carga vezes as requisições), cerca de 84,8% da CPU da API, e por isso mexer no log não ajudou e agrupar no banco ajudou. Georges et al. mostram, para programas Java, que o tempo varia entre execuções, e defendem intervalos de confiança [11]. Com três execuções, comparei a mediana, pedida pelo enunciado, e a sobreposição das faixas, o que é mais fraco que o método deles.
+**Medir com rigor.** Amdahl argumentou que o esforço em processamento paralelo é desperdiçado se a parte sequencial não melhora na mesma medida [10]. **Minha leitura:** apliquei a ideia à CPU por rota: pela conta de `diagnostico/28`, a soma no JavaScript de `vendas-por-dia` era cerca de 84,8% da CPU da API, e por isso mexer no log não ajudou e agrupar no banco ajudou. Georges et al. mostram, para Java, que o tempo varia entre execuções, e defendem intervalos de confiança [11]. Comparei a mediana de três execuções e a sobreposição das faixas, o que é mais fraco que o método deles.
 
 ## 4. Alternativas consideradas
 
-As abordagens A, B e C foram aplicadas e medidas, e a D não foi testada, então as células dela são estimativas. Cada linha traz um exemplo medido, em p95 da rota ou, na C, em CPU da API por requisição, e a seção 6 traz as 14 mudanças. O esforço inclui recriar o banco, porque todo `.sql` novo só roda assim.
+A, B e C foram aplicadas e medidas, e a D não foi testada, então as células dela são estimativas. Cada linha traz um exemplo medido, em p95 da rota ou, na C, em CPU da API por requisição. O esforço inclui recriar o banco, porque todo `.sql` novo só roda assim.
 
 | Alternativa | Custo | Desempenho | Risco | Esforço |
 | --- | --- | --- | --- | --- |
@@ -43,13 +43,13 @@ As abordagens A, B e C foram aplicadas e medidas, e a D não foi testada, então
 
 ## 5. Solução escolhida e por quê
 
-Pelo diagnóstico, nenhuma abordagem sozinha atendia todas as rotas, e escolhi combiná-las por rota. Onde o filtro é raro (cliente, e-mail, pedidos de um cliente), usei índices: quanto menos linhas o filtro devolve, mais um índice compensa. Onde a consulta usa quase toda a tabela (`top-produtos`), índice não resolve, porque com muitas linhas, e sem um `ORDER BY ... LIMIT` que o índice atenda, ele obriga a saltos aleatórios entre páginas, e o PostgreSQL estima, por padrão, que cada um custa 4 vezes uma leitura sequencial, um valor baixo de propósito, porque supõe que a maior parte esteja em cache [2]. Ali usei uma view com o resultado pronto. Onde o problema era o número de idas ao banco ou a soma feita no JavaScript, reescrevi a consulta (JOIN no lugar do N+1, `GROUP BY` no banco).
+Pelo diagnóstico, nenhuma abordagem sozinha atendia todas as rotas, e escolhi combiná-las por rota. Onde o filtro é raro (cliente, e-mail, pedidos de um cliente), usei índices: quanto menos linhas o filtro devolve, mais um índice compensa. Onde a consulta usa quase toda a tabela (`top-produtos`), índice não resolve, porque obriga a saltos aleatórios entre páginas, que o PostgreSQL estima em 4 vezes o custo de uma leitura sequencial [2]. Ali usei uma view com o resultado pronto. Onde o problema era o número de idas ao banco ou a soma feita no JavaScript, reescrevi a consulta (JOIN no lugar do N+1, `GROUP BY` no banco).
 
 Descartei o cache externo por dois motivos. Um cache só acerta quando os mesmos dados se repetem, o que em produção não é garantido, e ele também mostra dado antigo, problema que as views só evitam aqui porque a API só lê [14]. E um serviço a mais custaria a mais, fora dos limites originais, enquanto a view já elimina o trabalho repetido.
 
 ## 6. Experimento e resultado
 
-Medianas das execuções válidas de cada mudança (três, e cinco na 07), com 20 usuários virtuais, 60 s e semente 42, contra a mudança anterior, nos limites originais. Memória: média de banco / API em MiB (`recursos.txt`). CPU: leitura do cgroup, em segundos por execução, só nas mudanças 12, 13 e 14, porque o CPU do `docker stats` neste ambiente não é confiável (`diagnostico/33`). Detalhes e fontes: [experimentos.md](../experimentos.md).
+Medianas das execuções válidas (três, e cinco na 07), com 20 usuários virtuais, 60 s e semente 42, contra a mudança anterior, nos limites originais. Memória: média de banco / API em MiB. CPU: leitura do cgroup, em segundos por execução, só nas mudanças 12 a 14, porque o `docker stats` daqui não é confiável (`diagnostico/33`). Detalhes: [experimentos.md](../experimentos.md).
 
 | Mudança | Hipótese | p95 geral antes → depois (ms) | req/s antes → depois | CPU/memória | Pastas | Conclusão |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -72,7 +72,7 @@ O gráfico mostra a mediana de cada mudança, da linha de base à 14.
 
 ![Gráficos de linha da mediana de cada mudança: as requisições por segundo sobem de 4,21 para 115,08 e o p95 geral cai de 14.698,7 para 524,7 ms, em escala logarítmica.](img/evolucao-das-mudancas.svg)
 
-A mudança que mais surpreendeu foi a view materializada da 08: o p95 de `top-produtos` caiu de 32.719,5 para 415,3 ms e o req/s dobrou (de 20,52 para 41,45), porque a soma dos itens de pedido deixou de ser refeita a cada requisição. As duas maiores altas de req/s foram a 08 e a 14 (de 60,64 para 115,08): a API saiu do limite de CPU e o gargalo voltou para o banco. Com os mesmos limites, e portanto o mesmo custo provisionado, a aplicação atende 115,08 req/s contra 4,21, e a memória média caiu de 296,5 para 201,9 MiB no banco e de 54,3 para 27,9 MiB na API. Reduzir os limites ficou na ficha 5 de `proximos-testes.md`.
+A mudança que mais surpreendeu foi a view materializada da 08: o p95 de `top-produtos` caiu de 32.719,5 para 415,3 ms e o req/s dobrou, porque a soma dos itens deixou de ser refeita a cada requisição. A outra grande alta foi a 14: a API saiu do limite de CPU e o gargalo voltou para o banco. Com os mesmos limites, e portanto o mesmo custo provisionado, a aplicação atende 115,08 req/s contra 4,21, e a memória média caiu de 296,5 para 201,9 MiB no banco e de 54,3 para 27,9 MiB na API. Reduzir os limites ficou na ficha 5 de `proximos-testes.md`.
 
 O limite de CPU mudou de lugar ao longo das mudanças:
 
@@ -83,21 +83,21 @@ flowchart LR
     C --> D["Mudança 14<br/>GROUP BY no banco<br/>115,08 req/s<br/>banco de novo no limite"]
 ```
 
-Duas mudanças não deram ganho. A 04 (`max` 20 no pool) piorou o p95 geral, de 5.123,3 para 7.399,6 ms, e a 13 (log sem o corpo da resposta) deixou a CPU da API igual. Várias melhoraram a rota alvo e pioraram outras, como a 03, em que outras rotas ficaram mais lentas, provavelmente pela fila do pool de conexões, o que não foi medido.
+Duas mudanças não deram ganho. A 04 (`max` 20 no pool) piorou o p95 geral, de 5.123,3 para 7.399,6 ms, e a 13 (log sem o corpo da resposta) deixou a CPU da API igual.
 
 ## 7. Limites e testes futuros
 
 O que pode falhar e o que não foi verificado:
 
 - **Dado derivado sem atualização.** As duas views não têm `REFRESH` e só servem porque a API só lê. Com pedidos novos, elas mentiriam.
-- **Carga com poucos valores.** O teste de carga usa 12 termos de busca, janelas de 7 dias e `limite=10`, então os ganhos valem para essa distribuição.
-- **Memória do banco.** Na mudança 07 o banco chegou ao limite de 512 MiB e usou swap, sem causa isolada (`diagnostico/13`). Descartei execuções na 02 e na 06 por swap no banco e na 07 por erro ou por processo encerrado por falta de memória (na 07 todas as medidas usaram swap), e as pastas descartadas não foram mantidas (`experimentos.md`, `diagnostico/12` e `13`).
+- **Carga com poucos valores.** O teste usa 12 termos de busca, janelas de 7 dias e `limite=10`, então os ganhos valem para essa distribuição.
+- **Memória do banco.** Na 07 o banco chegou ao limite de 512 MiB e usou swap, sem causa isolada (`diagnostico/13`). Descartei execuções na 02 e na 06 por swap e na 07 por erro ou por processo encerrado por falta de memória (na 07 todas as medidas usaram swap), e as pastas descartadas não foram mantidas (`experimentos.md`, `diagnostico/12` e `13`).
 - **Custo dos índices.** Não foi medido nas escritas, porque a API só lê.
 - **Não testado.** O cache externo e a fila do pool de conexões (causa provável da piora de outras rotas nas mudanças 02 e 03) não foram medidos.
 
-A conclusão de que combinar abordagens por rota é melhor cairia se uma única abordagem, aplicada a todas as rotas com a mesma carga, chegasse a um p95 geral igual ou menor que o das 14 mudanças. Também cairia se, com escritas na carga, o custo de atualizar as views e os índices anulasse o ganho, ou se, com outra semente ou janelas de 31 dias, a ordem dos ganhos mudasse.
+A conclusão de que combinar abordagens por rota é melhor cairia se uma única abordagem, com a mesma carga, chegasse a um p95 geral igual ou menor que o das 14 mudanças, se, com escritas na carga, o custo de atualizar views e índices anulasse o ganho, ou se, com outra semente ou janelas de 31 dias, a ordem dos ganhos mudasse.
 
-Ficaram em [proximos-testes.md](../proximos-testes.md) uma view por dia para `vendas-por-dia`, um índice trigrama para a busca, um perfil de CPU da API, parâmetros do PostgreSQL, limites menores de memória e CPU e um cache externo.
+Em [proximos-testes.md](../proximos-testes.md) ficaram seis fichas, entre elas um índice trigrama para a busca e uma view por dia para `vendas-por-dia`.
 
 ## 8. Referências
 
@@ -118,4 +118,4 @@ Ficaram em [proximos-testes.md](../proximos-testes.md) uma view por dia para `ve
 
 ## 9. Uso de IA
 
-Usei um agente de IA para executar as medições e os diagnósticos (`EXPLAIN` e leituras de cgroup), conferir o contrato, gerar o gráfico, buscar fontes para consulta e respaldo e ajudar na redação, a partir das minhas respostas, que revisei seção por seção. Agentes revisaram números e citações, para evitar erro humano. O diagnóstico, as hipóteses, a escolha das mudanças e o SQL e as refatorações centrais foram meus. Os números de resultado vêm de `resultados/`, gerados pelo `medir.sh`, e os de CPU de `diagnostico/`.
+Usei um agente de IA para executar as medições e os diagnósticos (`EXPLAIN` e leituras de cgroup), conferir o contrato, gerar o gráfico, buscar fontes para consulta e respaldo e ajudar na redação, a partir das minhas respostas, que revisei seção por seção. Li cada fonte citada, e agentes revisaram números e citações, para evitar erro humano. O diagnóstico, as hipóteses, a escolha das mudanças e o SQL e as refatorações centrais foram meus, e os números vêm de `resultados/`, gerados pelo `medir.sh`, e de `diagnostico/`.
