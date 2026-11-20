@@ -49,7 +49,7 @@ Descartei o cache externo por dois motivos. Um cache só acerta quando os mesmos
 
 ## 6. Experimento e resultado
 
-Medianas das execuções válidas (três, e cinco na 07), com 20 usuários virtuais, 60 s e semente 42, contra a mudança anterior, nos limites originais. Memória: média de banco / API em MiB. CPU: leitura do cgroup, em segundos por execução, só nas mudanças 12 a 14, porque o `docker stats` daqui não é confiável (`diagnostico/33`). Detalhes: [experimentos.md](../experimentos.md).
+Medianas das execuções válidas (três, e cinco na 07), com 20 usuários virtuais, 60 s e semente 42, contra a mudança anterior, nos limites originais. Memória: média de banco / API em MiB. CPU: leitura do cgroup, em segundos por execução, só nas mudanças 12 a 14, porque o `docker stats` marcou um valor incompatível com o cgroup numa comparação (`diagnostico/33`). Detalhes: [experimentos.md](../experimentos.md).
 
 | Mudança | Hipótese | p95 geral antes → depois (ms) | req/s antes → depois | CPU/memória | Pastas | Conclusão |
 | --- | --- | --- | --- | --- | --- | --- |
