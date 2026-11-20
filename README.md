@@ -4,6 +4,41 @@ Aplicação do desafio técnico da vaga de estágio em Pesquisa e Inovação da 
 
 A aplicação é a API de uma loja fictícia, em Node.js (Express) com PostgreSQL 16, rodando em containers. Ela funciona, mas fica lenta sob carga e gasta mais recursos do que deveria. Todos os dados são sintéticos e gerados na primeira subida: 100 mil clientes, 20 mil produtos, 500 mil pedidos e 1,5 milhão de itens de pedido.
 
+## Resultados deste trabalho
+
+**O problema.** Na linha de base a aplicação atendia 4,21 requisições por segundo, com p95 geral de 14.698,7 ms, e o banco ficava estrangulado em cerca de 98% dos períodos de CPU pelo limite de 1 CPU (`diagnostico/00-cpu-por-cgroup-linha-de-base.txt`). Os problemas e a hipótese de causa de cada um estão em `diagnostico/indice.md`.
+
+**O que mudou.** Foram 14 mudanças, uma por vez, cada uma com a hipótese e o critério de refutação no corpo do commit, três medições (cinco na 07) e o contrato mantido (42 respostas iguais às gravadas). Os limites dos containers são os originais (banco 1 CPU e 512 MiB, API 0,5 CPU e 256 MiB). A tabela traz as medianas das execuções válidas de cada mudança contra a anterior, com 20 usuários virtuais, 60 s e semente 42. O detalhe de cada linha, com fonte, pastas e conclusão, está no [experimentos.md](experimentos.md).
+
+| # | Mudança | Status | req/s | p95 geral (ms) |
+| --- | --- | --- | --- | --- |
+| 01 | Índice em `itens_pedido(pedido_id)` | Aplicada e medida | 4,21 → 7,59 | 14.698,7 → 7.672,0 |
+| 02 | Pool de conexões (`max` 10) | Aplicada e medida | 7,59 → 9,12 | 7.672,0 → 6.918,9 |
+| 03 | `LEFT JOIN` em `/clientes/:id/pedidos` | Aplicada e medida | 9,12 → 9,75 | 6.918,9 → 5.123,3 |
+| 04 | Pool com `max` 20 | Aplicada, sem ganho | 9,75 → 9,66 | 5.123,3 → 7.399,6 |
+| 05 | Índice `(status, criado_em DESC, id DESC)` em `pedidos` | Aplicada e medida | 9,66 → 13,64 | 7.399,6 → 4.738,1 |
+| 06 | Índice `(cliente_id, criado_em DESC, id DESC)` em `pedidos` | Aplicada e medida | 13,64 → 19,6 | 4.738,1 → 5.303,5 |
+| 07 | Filtro por intervalo e índice em `pedidos(criado_em)` | Aplicada e medida | 19,6 → 20,52 | 5.303,5 → 2.718,4 |
+| 08 | `top-produtos` lê uma view materializada | Aplicada e medida | 20,52 → 41,45 | 2.718,4 → 1.644,1 |
+| 09 | `/pedidos` lê o total de uma view materializada | Aplicada e medida | 41,45 → 46,39 | 1.644,1 → 1.532,5 |
+| 10 | Índice cobrindo com `INCLUDE (cliente_id)` | Aplicada e medida | 46,39 → 52,09 | 1.532,5 → 1.298,8 |
+| 11 | Índice `(lower(email), id)` em `clientes` | Aplicada e medida | 52,09 → 60,43 | 1.298,8 → 972,5 |
+| 12 | Pool com `max` 10 de novo | Aplicada e medida | 60,43 → 61,03 | 972,5 → 786,3 |
+| 13 | Log da API sem o corpo da resposta | Aplicada, sem ganho | 61,03 → 60,64 | 786,3 → 793,3 |
+| 14 | `vendas-por-dia` agrupa por dia no banco | Aplicada e medida | 60,64 → 115,08 | 793,3 → 524,7 |
+
+Duas mudanças não deram ganho e ficam registradas com o porquê (04 e 13), e várias fizeram outras rotas ficarem mais lentas, o que o `experimentos.md` descreve rota por rota. Na 14 a API saiu do limite de CPU e o banco voltou a ser o gargalo (`diagnostico/29-cpu-e-memoria-na-14.txt`).
+
+**Onde está cada coisa:** `experimentos.md` (uma seção por mudança), `proximos-testes.md` (ideias pesquisadas e não testadas), `diagnostico/` (saídas de comandos, planos e leituras de CPU e memória), `resultados/` (as medições, uma pasta por execução) e `artigo/artigo.md` (o artigo).
+
+**Como repetir.** Os `.sql` novos de `banco/` só rodam quando o banco é criado do zero, então comece com `docker compose down -v` e `docker compose up -d --build`, confira com `scripts/verificar-contrato.sh comparar` e meça com `scripts/medir.sh <rótulo>`, como descrito em [Como medir](#como-medir).
+
+**Ambiente de medição.** Estes números foram medidos numa máquina com 4 CPUs lógicas e 13926 MB de RAM (`free -m`), em que o comando `docker` é o Podman 5.8.9, com cgroup v2 e o driver de armazenamento overlay sobre ZFS (`diagnostico/33-ambiente-e-cpu-do-podman-stats.txt`). Três pontos para ler os números:
+
+- O CPU do `docker stats` (coluna de CPU do `recursos.txt`) não é citado, porque com os containers sem carga ele marcou 11,71% para o banco contra 0,52% no cgroup (mesmo arquivo). As leituras de CPU usadas são as do cgroup, nos arquivos `diagnostico/00`, `26`, `27` e `29`.
+- Na mudança 07 o banco chegou ao limite de 512 MiB e usou swap em várias execuções, e só entraram na mediana as que tiveram 0,00% de erros e nenhum encerramento por falta de memória. Uma tentativa de desligar o swap do banco o fez ser encerrado por falta de memória (`experimentos.md`, seção 07, e `diagnostico/13-memoria-do-banco-na-07.txt`).
+- O armazenamento em ZFS tem cache próprio, e eu não afirmo nada sobre o efeito dele contra o limite de 512 MiB. A memória média citada nas comparações vem do `recursos.txt` e serve só como comparação relativa entre as mudanças.
+
 ## Prazo e entrega
 
 - **Prazo e entregas:** estão no enunciado enviado na largada

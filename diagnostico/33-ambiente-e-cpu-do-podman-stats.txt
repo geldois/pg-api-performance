@@ -1,0 +1,18 @@
+$ podman --version, docker-compose version --short, nproc, free -m, uname -r, df -T no diretório de armazenamento do Podman, podman info (driver de armazenamento, cgroup, runtime) e zfs get recordsize,compression (2026-11-20)
+
+podman version 5.8.9
+docker-compose 5.7.0
+4 CPUs lógicas (nproc)
+RAM total: 13926 MB (free -m)
+kernel 6.18.63
+sistema de arquivos do armazenamento do Podman: zfs (recordsize 128K, compression zstd)
+armazenamento do Podman: driver overlay, cgroup v2, runtime crun 1.27.1
+
+O comando `docker` desta máquina é o Podman, e o `docker compose` delega ao docker-compose 5.7.0.
+
+$ docker stats --no-stream com o banco e a API sem carga, e, na mesma janela de cerca de 6 s, a diferença do usage_usec do cpu.stat do cgroup do banco (2026-11-20)
+
+docker stats: desafio-performance-banco-1 11.71%, desafio-performance-api-1 12.13%
+cgroup do banco na janela de cerca de 6 s: 31385 usec, ou 0,52% de 1 CPU
+
+Com os dois containers sem carga, o `docker stats` marcou 11,71% para o banco, e o cgroup do banco mostrou 0,52% de 1 CPU na mesma janela. Por isso a coluna de CPU de `recursos.txt` não é citada neste trabalho, e as leituras de CPU usadas são as do cgroup (`diagnostico/00`, `26`, `27`, `29`).
